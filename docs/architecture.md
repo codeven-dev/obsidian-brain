@@ -64,7 +64,7 @@ The index is a single `better-sqlite3` file that holds everything: graph nodes, 
 
 Reference points in the code:
 
-- Schema: `src/store/db.ts:35` — `nodes`, `edges`, `communities`, `sync`, plus the FTS5 virtual table `nodes_fts` and the sqlite-vec virtual table `nodes_vec`. The vec0 dim is reconciled against the embedder at runtime via `ensureVecTable` (`src/store/db.ts:99`).
+- Schema: `src/store/db.ts:35` — `nodes`, `edges`, `communities`, `sync`, plus the FTS5 virtual table `nodes_fts` and the sqlite-vec virtual table `nodes_vec`. The vec0 dim is reconciled against the embedder at runtime via `ensureVecTable` (`src/store/db.ts:99`). Since v1.2.2 `deleteNode` also cascades to the `communities` table via `pruneNodeFromCommunities` (`src/store/communities.ts:32`), which filters the deleted id out of every community's `node_ids` array and removes rows that became empty.
 - Vector kNN: `src/store/embeddings.ts:39` — `embedding MATCH ? AND k = ?` against `vec0`.
 - Full-text: `src/store/fulltext.ts:27` — standard FTS5 `MATCH` with `snippet()` for excerpts.
 - Sync state: `src/store/sync.ts` — tracks `(path, mtime, indexed_at)` for incremental re-index.
@@ -91,7 +91,7 @@ Tradeoff: quality is measurably below modern API embeddings on hard semantic-sim
 
 ## Why incremental mtime sync
 
-Incremental mtime-based sync is the foundation both the live watcher and the scheduled fallback share. `src/pipeline/indexer.ts:41` implements the full-vault pipeline: parse vault, diff against `sync` state, upsert the diff, re-run community detection if anything changed.
+Incremental mtime-based sync is the foundation both the live watcher and the scheduled fallback share. `src/pipeline/indexer.ts:41` implements the full-vault pipeline: parse vault, diff against `sync` state, upsert the diff, re-run community detection if anything changed. Since v1.2.2, "anything changed" also counts deletions and an explicit `resolution` argument — before, a delete-only run or a resolution-change-with-no-mtime-change would silently skip community refresh and leave ghost node ids in the `communities` table.
 
 Why mtime-keyed incrementality:
 

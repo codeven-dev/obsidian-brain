@@ -89,7 +89,7 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
 
 ### Maintenance
 
-- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe.
+- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe. Since v1.2.2, passing `resolution` or detecting any deletion forces a fresh Louvain community pass (previously these could silently no-op).
   > *"Use `reindex` to refresh the index after I bulk-edited files outside Claude."*
 
 ## How it works
