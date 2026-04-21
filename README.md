@@ -187,6 +187,19 @@ Save + enable. Jan will spawn the process and populate the tool list.
 
 Full walkthrough + troubleshooting: [docs/jan.md](docs/jan.md).
 
+## Coming from the Obsidian MCP plugin?
+
+If you were using [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obsidian-mcp-plugin) (Semantic Notes Vault MCP) as your Claude connector, you can turn it off once obsidian-brain is wired in — every feature you were using via it is covered here, served by a stdio process instead of an HTTP endpoint inside Obsidian.
+
+Cleanup steps:
+
+1. Remove the old MCP entry from your client's config. For Claude Desktop, delete the `obsidian-vault` block (or whatever you named it) from `claude_desktop_config.json` and replace with the `obsidian-brain` block from [Wiring into Claude Desktop](#wiring-into-claude-desktop) above.
+2. In Obsidian: Settings → Community plugins → disable **Semantic Notes Vault MCP**. Safe to leave installed in case you want to re-enable later; otherwise click the trash icon to uninstall.
+3. **BRAT (Obsidian42 - BRAT)** was only needed to install the aaronsb plugin as a beta. If you aren't beta-testing other plugins, disable or uninstall it as well.
+4. Fully quit Claude Desktop (⌘Q on macOS) and relaunch. The tool list should now show only obsidian-brain's 13 tools — no duplicate connectors.
+
+One reason to keep the aaronsb plugin: if you use **Dataview** queries or **Bases** and want Claude to read/evaluate them, those need a running Obsidian with its plugin system — obsidian-brain reads `.md` files directly from disk and deliberately doesn't reimplement Dataview's query engine or Bases. You can keep both running side-by-side in that case; they don't conflict (different process, different transport, different tool names).
+
 ## Scheduled re-indexing
 
 The server doesn't watch for file changes — it relies on a scheduled CLI run to keep the index fresh. On macOS use a LaunchAgent; on Linux a systemd user timer; on Windows Task Scheduler.
