@@ -48,7 +48,7 @@ Incremental by default — only files whose `mtime` has changed go through parse
 
 ## Why stdio, not HTTP
 
-The single most consequential decision. `src/server.ts:37` instantiates a `StdioServerTransport` and nothing else — there is no HTTP listener, no SSE endpoint, no port binding anywhere in the codebase.
+The single most consequential decision. `src/server.ts:56` instantiates a `StdioServerTransport` and nothing else — there is no HTTP listener, no SSE endpoint, no port binding anywhere in the codebase.
 
 Arguments for stdio:
 
@@ -64,42 +64,43 @@ The index is a single `better-sqlite3` file that holds everything: graph nodes, 
 
 Reference points in the code:
 
-- Schema: `src/store/db.ts:28` — `nodes`, `edges`, `communities`, `sync`, plus the FTS5 virtual table `nodes_fts` and the sqlite-vec virtual table `nodes_vec`.
-- Vector kNN: `src/store/embeddings.ts:29` — `embedding MATCH ? AND k = ?` against `vec0`.
-- Full-text: `src/store/fulltext.ts:16` — standard FTS5 `MATCH` with `snippet()` for excerpts.
+- Schema: `src/store/db.ts:35` — `nodes`, `edges`, `communities`, `sync`, plus the FTS5 virtual table `nodes_fts` and the sqlite-vec virtual table `nodes_vec`. The vec0 dim is reconciled against the embedder at runtime via `ensureVecTable` (`src/store/db.ts:99`).
+- Vector kNN: `src/store/embeddings.ts:39` — `embedding MATCH ? AND k = ?` against `vec0`.
+- Full-text: `src/store/fulltext.ts:27` — standard FTS5 `MATCH` with `snippet()` for excerpts.
 - Sync state: `src/store/sync.ts` — tracks `(path, mtime, indexed_at)` for incremental re-index.
 
 Why one file for all of it:
 
 - **One data dir, one backup, one invariant.** If you `cp` the SQLite file, you've copied the entire index atomically. If you delete `DATA_DIR`, everything resets cleanly. There is no "the vector DB is ahead of the graph DB" drift to reason about.
 - **Vault-relative path is the universal join key.** Every row everywhere uses the relative path (e.g. `Areas/Ideas/thought.md`) as its ID. Nodes, edges, embeddings, and sync all join on it. See `src/store/nodes.ts`, `src/store/edges.ts`, `src/store/embeddings.ts`.
-- **better-sqlite3 is synchronous and fast.** For a single-vault, single-user workload there is no concurrent writer, so we skip connection pooling and async ceremony entirely. `src/store/db.ts:18` sets `journal_mode = WAL` for safe reads during writes and that is the whole concurrency story.
+- **better-sqlite3 is synchronous and fast.** For a single-vault, single-user workload there is no concurrent writer, so we skip connection pooling and async ceremony entirely. `src/store/db.ts:25` sets `journal_mode = WAL` for safe reads during writes and that is the whole concurrency story.
 
 Tradeoff: sqlite-vec does a full scan for kNN. This is fine at the vault sizes we target (50k notes: subsecond on commodity hardware). Past roughly 500k notes you'd want an ANN index and this decision would need re-evaluation.
 
 ## Why local embeddings (Xenova all-MiniLM-L6-v2)
 
-`src/embeddings/embedder.ts:3` hardcodes `Xenova/all-MiniLM-L6-v2` as the default, run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization.
+The default model is `Xenova/all-MiniLM-L6-v2` (`src/embeddings/embedder.ts:3`), overridable via `EMBEDDING_MODEL` (`src/embeddings/embedder.ts:21`), run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization.
 
 Why not an API like OpenAI's `text-embedding-3-small`:
 
 - **Zero egress.** Vault content never leaves the machine. For people whose notes include journal entries, client names, medical notes, or anything else they'd rather not mail to an LLM vendor, this is the whole game.
-- **No API key, no quota, no billing.** Important for a tool that wants to re-embed a subset of the vault every 30 minutes without anyone thinking about it.
+- **No API key, no quota, no billing.** Important for a tool that re-embeds on every file save without anyone thinking about it.
 - **~22 MB one-time model download**, then ~40 ms per note on CPU. Fast enough that the first full index of a 10k-note vault completes in minutes and incremental re-indexing is imperceptible.
 
-Tradeoff: quality is measurably below modern API embeddings on hard semantic-similarity benchmarks. If this matters for your vault, the model is pluggable — `src/config.ts` reads `EMBEDDING_MODEL` from env, and any transformers.js-compatible sentence-embedding model that produces a single 384-dim (or differently-dim'd, if you also update the schema) vector will work. `Embedder.buildEmbeddingText` at `src/embeddings/embedder.ts:41` is deliberately simple (title + tags + first paragraph) so it works across model choices.
+Tradeoff: quality is measurably below modern API embeddings on hard semantic-similarity benchmarks. If this matters for your vault, the model is pluggable — the embedder reads `EMBEDDING_MODEL` from env (`src/embeddings/embedder.ts:21`), probes output dim on init, and reconciles against the stored vec0 table. Any transformers.js-compatible sentence-embedding model works. If the new model's output dim differs from the stored index, the server errors with an instruction to run `obsidian-brain index --drop` and reindex (`src/store/db.ts:99-120`). `Embedder.buildEmbeddingText` is deliberately simple (title + tags + first paragraph) so it works across model choices.
 
 ## Why incremental mtime sync
 
-There is no file watcher and no long-running daemon. Indexing is a periodic CLI run. `src/pipeline/indexer.ts:32` implements the full pipeline: parse vault, diff against `sync` state, upsert the diff, re-run community detection if anything changed.
+Incremental mtime-based sync is the foundation both the live watcher and the scheduled fallback share. `src/pipeline/indexer.ts:41` implements the full-vault pipeline: parse vault, diff against `sync` state, upsert the diff, re-run community detection if anything changed.
 
-Why periodic over watched:
+Why mtime-keyed incrementality:
 
-- **File watchers across macOS / Linux / iCloud-synced folders are a known rabbit hole.** `fsevents` silently drops events under high churn, inotify watchers die on move/rename under some filesystems, and iCloud Drive materializes files lazily so you get notifications for paths that are not actually readable yet. Every "just watch the folder" approach eventually has to add a periodic rescan anyway for correctness.
-- **A periodic re-index is boring, correct, and robust to sleep/resume.** `systemd` with `Persistent=true` catches up on missed timer fires after the machine wakes; `launchd` with `StartInterval` does the equivalent on macOS. See `docs/launchd.md` and `docs/systemd.md` for the working configs.
-- **Incremental is cheap.** The indexer checks `stat.mtimeMs` against the stored mtime in `sync` (`src/pipeline/indexer.ts:54`); if the file hasn't changed it skips re-parsing and re-embedding entirely. A full re-scan of an already-indexed 10k-note vault costs roughly a `stat()` per file.
+- **Incremental is cheap.** The indexer checks `stat.mtimeMs` against the stored mtime in `sync` (`src/pipeline/indexer.ts:159`); if the file hasn't changed it skips re-parsing and re-embedding entirely. A full re-scan of an already-indexed 10k-note vault costs roughly a `stat()` per file.
+- **The per-file primitive is shared between live and batch.** `indexSingleNote` (`src/pipeline/indexer.ts:87`) is what the watcher calls per debounced change; `index()` loops it across the whole vault. Both read the same mtime state, so any path can be reindexed from either entry point without drift.
+- **Robust to sleep/resume.** `systemd` with `Persistent=true` catches up on missed timer fires after the machine wakes; `launchd` with `StartInterval` does the equivalent on macOS. See `docs/launchd.md` and `docs/systemd.md` for the scheduled-fallback configs.
+- **The fallback exists because watchers across macOS / Linux / iCloud-synced folders are a known rabbit hole.** FSEvents silently drops events under high churn, inotify watchers die on move/rename under some filesystems, and iCloud Drive materialises files lazily. If the watcher misses an event on your setup, disable it (`OBSIDIAN_BRAIN_NO_WATCH=1`) and run `obsidian-brain index` on a timer instead.
 
-Tradeoff: the index lags real edits by up to the timer interval (default 30 min). For immediate freshness after a big manual edit, call the `reindex` MCP tool from chat (`src/tools/reindex.ts`) or run `obsidian-brain index` directly (or `node dist/cli/index.js index` from a local source clone).
+Default behaviour: the watcher keeps the index live as you edit. If you disable it or your vault lives somewhere it can't observe, the scheduled-index timer fills the gap. For an ad-hoc refresh after a big manual edit, call the `reindex` MCP tool from chat (`src/tools/reindex.ts`) or run `obsidian-brain index` directly.
 
 ## Live sync
 
@@ -117,16 +118,16 @@ When to disable (`OBSIDIAN_BRAIN_NO_WATCH=1`): vault on SMB/NFS/iCloud where FSE
 
 Every source file under `src/` targets under 200 lines and has a single concern. The directory layout is:
 
-- `src/server.ts` — MCP server bootstrap. Instantiates `McpServer`, wires `StdioServerTransport`, registers every tool.
-- `src/config.ts` / `src/context.ts` — env parsing and the shared `Context` object (DB handle, embedder, vault path) passed to every tool.
-- `src/cli/` — the `obsidian-brain` CLI entry point for scheduled re-indexing.
+- `src/server.ts` — MCP server bootstrap. Instantiates `McpServer`, wires `StdioServerTransport`, registers every tool, and starts the live watcher.
+- `src/config.ts` / `src/context.ts` — env parsing and the shared `ServerContext` object (DB handle, embedder, vault path, pipeline, writer, search) passed to every tool.
+- `src/cli/` — the `obsidian-brain` CLI entry point: `server`, `index`, `watch`, `search` subcommands.
 - `src/store/` — SQLite schema and per-table CRUD (`db`, `nodes`, `edges`, `embeddings`, `fulltext`, `communities`, `sync`).
 - `src/embeddings/` — the transformers.js Embedder wrapper. One file.
 - `src/graph/` — graph construction (`builder`), centrality (`centrality`), Louvain community detection (`communities`), shortest paths (`pathfinding`), and the graphology-compat shim.
 - `src/vault/` — reading, writing, parsing, and editing `.md` files on disk; wiki-link resolution; fuzzy filename matching.
 - `src/search/` — unified semantic + full-text search surface.
 - `src/resolve/` — fuzzy note-name resolution used by tools that accept human-typed note titles.
-- `src/pipeline/` — the indexing orchestrator (`indexer.ts`) that stitches vault parsing, store writes, embedding, and community detection together.
+- `src/pipeline/` — the indexing orchestrator (`indexer.ts`) that stitches vault parsing, store writes, embedding, and community detection together; plus the chokidar watcher (`watcher.ts`) that drives `indexSingleNote` on debounced file-change events.
 - `src/tools/` — one file per MCP tool. `register.ts` is the shared Zod/schema helper; everything else is a tool handler.
 
 Why this shape:

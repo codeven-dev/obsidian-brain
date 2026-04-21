@@ -118,7 +118,7 @@ The next run will re-download cleanly.
 
 **Summary.** You edited notes directly in Obsidian (or on disk) and `search` does not reflect the change.
 
-**Cause.** Background re-indexing is driven by a launchd or systemd timer, which by default runs every 30 minutes. Changes made outside the MCP server's own write tools are not picked up until the next tick.
+**Cause.** Since v1.1 the `server` watcher normally picks this up within a few seconds. If search is still stale, one of: the watcher is disabled (`OBSIDIAN_BRAIN_NO_WATCH=1`), the vault lives somewhere FSEvents/inotify can't observe (SMB, NFS, some iCloud setups), or you're running on the scheduled-index fallback which only ticks every 30 minutes. See also [Watcher not firing](#watcher-not-firing).
 
 **Fix.** Either call the `reindex` tool from chat, or run the CLI manually:
 
@@ -237,13 +237,13 @@ Default locations: `$HOME/.local/share/obsidian-brain` on Linux, `$HOME/Library/
 { "mode": "fulltext" }
 ```
 
-passed via `kg_search`. If you want better semantic retrieval and can tolerate slower indexing, switch to a larger model:
+passed via `search`. If you want better semantic retrieval and can tolerate slower indexing, switch to a larger model:
 
 ```bash
-export EMBEDDING_MODEL=Xenova/all-mpnet-base-v2
+VAULT_PATH=/path/to/vault EMBEDDING_MODEL=Xenova/all-mpnet-base-v2 obsidian-brain index --drop
 ```
 
-Then rebuild the index. `all-mpnet-base-v2` is noticeably higher quality but also noticeably slower and larger on disk.
+`--drop` is required when the new model's output dim differs from the stored index (e.g. all-mpnet-base-v2 is 768-dim vs all-MiniLM's 384). `all-mpnet-base-v2` is noticeably higher quality but also noticeably slower and larger on disk.
 
 ---
 
@@ -273,7 +273,7 @@ Rebuild and restart the client. This is rare in our code (we have fixed it once 
 
 **Summary.** You wrote a note via an MCP tool. It shows up on disk and in Obsidian immediately, but `search` does not find it until much later.
 
-**Cause.** The write tool is supposed to refresh the affected file in the index immediately after the write succeeds. If that inline re-index failed (network flake, filesystem error, transient SQLite lock), the file will not show up in search until the next scheduled pass from launchd or systemd, which runs every 30 minutes.
+**Cause.** The write tool refreshes the affected file in the index immediately after the write succeeds, and the live watcher catches it on disk as a second-chance. If both failed (transient SQLite lock, filesystem error, or watcher disabled on a vault FSEvents can't observe), the file won't show up in search until the next scheduled pass from launchd or systemd — which only runs if you've set up a timer-based fallback, otherwise never.
 
 **Fix.** Check the MCP server log for a re-index error near the time of the write:
 

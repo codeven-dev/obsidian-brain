@@ -7,7 +7,7 @@
 
 A standalone Node MCP server that gives Claude (and any other MCP client) **semantic search + knowledge graph + vault editing** over an Obsidian vault. Runs as one local stdio process — no plugin, no HTTP bridge, no API key, nothing hosted. Your vault content never leaves your machine.
 
-**Contents** — [Quick start](#quick-start) · [Tool reference](#tool-reference) · [How it works](#how-it-works) · [Install in your MCP client](#install-in-your-mcp-client) · [Configuration](#configuration) · [Scheduled re-indexing](#scheduled-re-indexing) · [Troubleshooting](#troubleshooting) · [Migrating from the aaronsb plugin](#coming-from-the-obsidian-mcp-plugin) · [Development](#development--install-from-source) · [Live updates](#live-updates)
+**Contents** — [Quick start](#quick-start) · [Tool reference](#tool-reference) · [How it works](#how-it-works) · [Install in your MCP client](#install-in-your-mcp-client) · [Migrating from the aaronsb plugin](#coming-from-the-obsidian-mcp-plugin) · [Scheduled re-indexing](#scheduled-re-indexing) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Development](#development--install-from-source) · [Live updates](#live-updates) · [What it doesn't do](#what-it-does-not-do-yet)
 
 ## Quick start
 
@@ -81,7 +81,7 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
 
 ### Maintenance
 
-- **`reindex`** — Force a full re-index. Normally auto-run on a launchd/systemd timer.
+- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe.
   > *"Use `reindex` to refresh the index after I bulk-edited files outside Claude."*
 
 ## How it works
@@ -476,7 +476,7 @@ If you were using [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obs
 2. Disable the plugin in Obsidian (Settings → Community plugins → toggle off). Uninstall BRAT too if you don't beta-test other plugins.
 3. Quit Claude Desktop (⌘Q) and relaunch.
 
-Keep the plugin alongside obsidian-brain only if you actually use **Dataview** or **Bases** and want Claude to read them — those need Obsidian's plugin API and are deliberately out of scope here.
+Keep the plugin alongside obsidian-brain only if you actually use **Dataview DQL queries** or **Bases** and want Claude to read them — those need Obsidian's plugin API and are deliberately out of scope here. Inline Dataview `key:: value` fields *are* parsed and searchable in obsidian-brain without the plugin.
 
 ## Scheduled re-indexing
 

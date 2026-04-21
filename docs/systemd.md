@@ -1,12 +1,12 @@
-# Linux systemd user timer
+# Linux systemd setup
 
-Keep your obsidian-brain index fresh on Linux by running `obsidian-brain index` every 30 minutes via a systemd **user** timer. No root, no system-wide install.
+Two approaches, watcher-first. Since v1.1 `obsidian-brain server` already watches the vault whenever it's running, so most users who launch obsidian-brain from an MCP client don't need anything here. If you want a dedicated daemon that keeps the index fresh even when no MCP client is running, use the [watcher service](#recommended-run-the-watcher-instead) below. If your vault lives somewhere FSEvents/inotify can't observe (SMB, some NFS setups) or you prefer a fixed schedule, skip to the [timer fallback](#what-it-does-scheduled-fallback).
+
+No root, no system-wide install — everything lives under `~/.config/systemd/user/`.
 
 ## Recommended: run the watcher instead
 
-Since v1.1 the `server` subcommand watches the vault by default, so if you run obsidian-brain from an MCP client you don't need a scheduled job at all — the index stays live as you edit.
-
-If you want a dedicated daemon that keeps the index fresh without any MCP client (useful on a server or a headless box), run the `watch` subcommand as a systemd user service. Create `~/.config/systemd/user/obsidian-brain-watch.service`:
+Run the `watch` subcommand as a systemd user service — useful on a server, a headless box, or any machine where you want the index live even when no MCP client is running. Create `~/.config/systemd/user/obsidian-brain-watch.service`:
 
 ```ini
 [Unit]
