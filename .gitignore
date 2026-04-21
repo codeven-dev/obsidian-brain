@@ -1,0 +1,24 @@
+node_modules/
+dist/
+reference/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+coverage/
+.vitest/
+*.tsbuildinfo
+
+# Local data — never commit
+data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db

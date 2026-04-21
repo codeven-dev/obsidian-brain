@@ -1,0 +1,238 @@
+# obsidian-brain
+
+A standalone Node MCP server that gives Claude (or any MCP client) **semantic search + knowledge graph + vault editing** over an Obsidian vault — with **no Obsidian plugin required** and no HTTP bridge.
+
+Built by merging the most useful parts of [`obra/knowledge-graph`](https://github.com/obra/knowledge-graph) (retrieval + graph) and [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obsidian-mcp-plugin) (vault editing), reimplemented as one standalone Node process that reads + writes the vault directly from disk.
+
+## Why this exists
+
+Two existing MCP servers cover similar ground:
+
+1. **`obra/knowledge-graph`** — excellent semantic retrieval + graph analytics, but read-heavy and a little clunky tool-wise.
+2. **`aaronsb/obsidian-mcp-plugin`** — rich write/edit capability, but lives inside Obsidian and only works while Obsidian is open.
+
+Running them side-by-side works but:
+
+- Tools overlap — Claude picks the wrong one without careful routing instructions.
+- Obsidian-plugin half dies whenever Obsidian is closed.
+- Fourteen `kg_*` tools plus eight vault tool-groups is more surface area than any one workflow needs.
+
+`obsidian-brain` solves this by unifying both into one stdio MCP server. Trade-offs: you lose Dataview, Bases, and live-workspace features that required the Obsidian API. You keep everything else, plus predictable routing and a single process.
+
+## What you get
+
+### 13 tools
+
+| Tool | What it does |
+|---|---|
+| `search` | Semantic **or** full-text search over the vault. |
+| `read_note` | Read a note with metadata + optional full content. Fuzzy-matches filenames. |
+| `list_notes` | List notes, optionally filtered by directory or tag. |
+| `find_connections` | N-hop link neighborhood around a note. Optional full subgraph. |
+| `find_path_between` | Shortest link chain(s) between two notes. Optional shared-neighbors. |
+| `detect_themes` | Auto-detected topic clusters (Louvain community detection). |
+| `rank_notes` | Top notes by influence (PageRank) or bridging (betweenness). |
+| `create_note` | Create a new note with frontmatter, auto-index it. |
+| `edit_note` | Modify an existing note (append / prepend / window / patch-heading / patch-frontmatter / at-line). |
+| `link_notes` | Add a wiki-link between two notes with a "why this connects" context sentence. |
+| `move_note` | Rename or move a note; edges stay intact. |
+| `delete_note` | Delete a note; requires `confirm: true`. |
+| `reindex` | Force a full re-index. Normally auto-run on a timer. |
+
+### One process, one config
+
+Plain stdio MCP server. Works whether or not Obsidian is running. Writes land on disk; Obsidian picks them up on its own rescan.
+
+### Incremental index with mtime tracking
+
+Re-indexing only touches files whose modification time changed since last run. A launchd/systemd timer every ~30 min is enough for most vaults.
+
+## How it works
+
+```
+┌──────────────────────┐     stdio JSON-RPC     ┌──────────────────────────┐
+│                      │ ─────────────────────► │                          │
+│   MCP client         │                        │  obsidian-brain          │
+│   (Claude Desktop,   │ ◄───────────────────── │  (Node process)          │
+│    Claude Code,      │                        │                          │
+│    your own)         │                        │  ┌────────────────────┐  │
+│                      │                        │  │ SQLite index       │  │
+└──────────────────────┘                        │  │  - nodes / edges   │  │
+                                                │  │  - FTS5            │  │
+                                                │  │  - vec0 embeddings │  │
+                                                │  └────────────────────┘  │
+                                                │            │             │
+                                                │            ▼             │
+                                                │  ┌────────────────────┐  │
+                                                │  │ Vault on disk      │  │
+                                                │  │  (your .md files)  │  │
+                                                │  └────────────────────┘  │
+                                                └──────────────────────────┘
+```
+
+- **Retrieval** (`search`, `read_note`, `find_connections`, etc.) is served from the SQLite index in microseconds.
+- **Writes** (`create_note`, `edit_note`, `link_notes`, etc.) go straight to `.md` files on disk, then incrementally re-index the affected file.
+- **Embeddings** use [Xenova's local port of all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) — 384 dimensions, ~22 MB model, runs fully local with no API calls.
+
+## Install
+
+Prerequisites:
+- Node 20+
+- An Obsidian vault (or any folder of `.md` files — Obsidian itself is optional)
+
+```bash
+git clone https://github.com/sweir1/obsidian-brain.git
+cd obsidian-brain
+npm install
+npm run build
+```
+
+Point it at your vault:
+
+```bash
+cp .env.example .env
+# edit .env — set VAULT_PATH to your vault's absolute path
+```
+
+First run builds the index (downloads the embedding model once; a few seconds to a couple of minutes depending on vault size):
+
+```bash
+VAULT_PATH="$HOME/path/to/your/vault" node dist/cli/index.js index
+```
+
+Smoke-test:
+
+```bash
+VAULT_PATH="$HOME/path/to/your/vault" node dist/cli/index.js search "some query"
+```
+
+## Wiring into Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the equivalent on Linux/Windows:
+
+```json
+{
+  "mcpServers": {
+    "obsidian-brain": {
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/obsidian-brain/dist/server.js"
+      ],
+      "env": {
+        "VAULT_PATH": "/absolute/path/to/your/vault"
+      }
+    }
+  }
+}
+```
+
+Notes:
+- Use the absolute path to `node` because Claude Desktop launches subprocesses with a minimal PATH. On macOS with Homebrew: `/opt/homebrew/bin/node`.
+- Quit Claude Desktop fully (⌘Q on macOS) and relaunch to pick up the new config.
+
+## Wiring into Claude Code
+
+Add a `.mcp.json` at your repo root, or use the `claude mcp add` CLI:
+
+```bash
+claude mcp add obsidian-brain \
+  --scope user \
+  -e VAULT_PATH="$HOME/path/to/your/vault" \
+  -- node /absolute/path/to/obsidian-brain/dist/server.js
+```
+
+## Scheduled re-indexing
+
+The server doesn't watch for file changes — it relies on a scheduled CLI run to keep the index fresh. On macOS use a LaunchAgent; on Linux a systemd user timer; on Windows Task Scheduler.
+
+Example LaunchAgent (`~/Library/LaunchAgents/com.you.obsidian-brain.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.you.obsidian-brain</string>
+  <key>WorkingDirectory</key>
+  <string>/absolute/path/to/obsidian-brain</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>dist/cli/index.js</string>
+    <string>index</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VAULT_PATH</key>
+    <string>/absolute/path/to/your/vault</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
+```
+
+Load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.you.obsidian-brain.plist
+```
+
+Substitute absolute paths. Linux example with systemd is in `docs/systemd.md` (TBD).
+
+## Configuration
+
+All config is via environment variables:
+
+| Variable | Required? | Default | Description |
+|---|---|---|---|
+| `VAULT_PATH` | **yes** | — | Absolute path to the vault (folder of `.md` files). |
+| `DATA_DIR` | no | `$XDG_DATA_HOME/obsidian-brain` or `$HOME/.local/share/obsidian-brain` | Where the SQLite index + embedding cache live. |
+| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` | Hugging Face transformers-js model. Must be a sentence-embedding model that outputs a single vector. |
+
+## Project layout
+
+```
+obsidian-brain/
+├── src/
+│   ├── server.ts              # MCP server bootstrap
+│   ├── cli/index.ts           # `obsidian-brain` CLI
+│   ├── config.ts              # env parsing
+│   ├── tools/                 # one file per MCP tool
+│   ├── store/                 # SQLite schema + CRUD
+│   ├── embeddings/            # Xenova model wrapper
+│   ├── graph/                 # graphology + analytics
+│   ├── vault/                 # read/write/edit .md files
+│   ├── search/                # semantic + FTS
+│   ├── resolve/               # fuzzy note-name matching
+│   └── pipeline/              # indexing orchestrator
+├── test/                      # vitest
+└── dist/                      # tsc output (gitignored)
+```
+
+Every source file targets <200 lines and has a single concern.
+
+## What it does *not* do (yet)
+
+- No Dataview query execution (would require a running Obsidian + Dataview plugin).
+- No Obsidian Bases support (same reason).
+- No live-workspace / active-editor awareness (needs Obsidian's API).
+- No file watcher — indexing is on-demand / timer-driven.
+- No hybrid cloud embeddings — all local, no API calls.
+
+If any of those matter to you, use `obsidian-brain` alongside the aaronsb plugin for the Obsidian-API bits; they're complementary, not exclusive.
+
+## Credits
+
+- [obra/knowledge-graph](https://github.com/obra/knowledge-graph) — the SQLite + graph + embedding stack we ported wholesale.
+- [aaronsb/obsidian-mcp-plugin](https://github.com/aaronsb/obsidian-mcp-plugin) — the edit-operation design (window / patch / at-line) we reimplemented on plain FS.
+- [Xenova/transformers.js](https://github.com/xenova/transformers.js) — local sentence embeddings.
+- [graphology](https://graphology.github.io/) — graph + centrality + community detection.
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) — vector search inside SQLite.
+
+## License
+
+MIT.
