@@ -44,7 +44,7 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
 
 ## Tool reference
 
-13 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction.
+14 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction. Tools marked *requires companion plugin* only work when the [companion Obsidian plugin](docs/plugin.md) is installed and Obsidian is running.
 
 ### Find stuff
 
@@ -181,7 +181,7 @@ Fastest: **Cursor Settings → MCP → Add new MCP server**. Or edit `~/.cursor/
 }
 ```
 
-Reload Cursor; the server appears under Settings → MCP with its 13 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
+Reload Cursor; the server appears under Settings → MCP with its 14 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
 
 </details>
 
@@ -483,7 +483,7 @@ If you were using [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obs
 2. Disable the plugin in Obsidian (Settings → Community plugins → toggle off). Uninstall BRAT too if you don't beta-test other plugins.
 3. Quit Claude Desktop (⌘Q) and relaunch.
 
-Keep the plugin alongside obsidian-brain only if you actually use **Dataview DQL queries** or **Bases** and want Claude to read them — those need Obsidian's plugin API and are deliberately out of scope here. Inline Dataview `key:: value` fields *are* parsed and searchable in obsidian-brain without the plugin.
+You can uninstall the aaronsb plugin entirely. We're building equivalent Dataview + Bases support into our own optional [companion plugin](docs/plugin.md) — `active_note` is live in v1.2.0, `dataview_query` lands in v1.3.0, `base_query` in v1.4.0. In the meantime, inline Dataview `key:: value` fields are already parsed and searchable without any plugin.
 
 ## Scheduled re-indexing
 

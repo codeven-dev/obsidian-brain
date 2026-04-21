@@ -136,18 +136,23 @@ Why this shape:
 - **Swap surface area is small and local.** You can replace `src/graph/centrality.ts` with an approximate-pagerank variant without touching anything else; you can replace `src/store/embeddings.ts` with a HNSW-backed implementation without touching the graph code. Tools never reach into stores directly except via the exported functions.
 - **The tool layer is flat on purpose.** `src/tools/*.ts` is one-file-per-tool because it matches the MCP surface 1:1 — when a user asks "what does `find_connections` do?", you open exactly one file.
 
-## Why we dropped the aaronsb-plugin features
+## Features that require a companion plugin
 
-obsidian-brain deliberately does not implement:
+Three capabilities only exist **inside a running Obsidian process** — not in the on-disk vault:
 
-- Dataview DQL query execution (we do parse inline `key:: value` fields into searchable frontmatter)
-- Obsidian Bases
-- Live-workspace / active-editor awareness
-- Hybrid or cloud embeddings
+- **Dataview DQL queries** — Dataview's index and query engine live in Obsidian's memory.
+- **Obsidian Bases** — view rows are computed against Obsidian's metadata cache.
+- **Live-workspace / active-editor awareness** — which note is open and the cursor position only exist in the UI.
 
-All of those except the last require Obsidian to be running with specific plugins loaded — they are features of Obsidian's runtime, not features of the vault on disk. obsidian-brain's whole premise is that you don't need Obsidian running. Adding these would force us to either (a) require the Obsidian API, which reintroduces the "plugin half dies when Obsidian closes" problem we're trying to avoid, or (b) reimplement Dataview etc. from scratch, which is a multi-year project.
+For these we ship an **optional** [`obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) that runs inside Obsidian and exposes a localhost-only HTTP endpoint with bearer-token auth. The standalone MCP server discovers the plugin via a vault-scoped discovery file at `{VAULT}/.obsidian/plugins/obsidian-brain-companion/discovery.json` and proxies the three plugin-dependent tools through it. When the plugin is absent or Obsidian isn't running, those tools surface an actionable install message; every other tool keeps working.
 
-If you need those features, run the [aaronsb/obsidian-mcp-plugin](https://github.com/aaronsb/obsidian-mcp-plugin) alongside obsidian-brain. They're complementary — stdio transport vs. HTTP transport, different tool names, no conflict.
+Why this shape (a plugin that's just a data provider, not an MCP server):
+
+- **Keeps the MCP surface stdio-only.** Putting the MCP server inside the plugin, as [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obsidian-mcp-plugin) does, forces HTTP transport, which is what trips the rmcp SSE bug in Jan. Our stdio server sidesteps that entirely (see Appendix).
+- **Keeps the "works without Obsidian" promise.** The standalone server and its 13 non-plugin-dependent tools are fully functional with Obsidian closed.
+- **Plugin is a minimal data provider, not a full MCP implementation.** A few HTTP routes, ~5 KB of bundled code. The tool surface, auth, schema validation, and MCP protocol handling all live in the Node server where they already work.
+
+**Cloud embeddings** (OpenAI / Voyage / Cohere) are the one item in the "doesn't do" table that won't land via the plugin. That's a deliberate stance — fully local, zero egress, works offline. The `Embedder` interface is forkable if anyone wants cloud embeddings as a personal variant.
 
 ## Appendix: the rmcp / SSE bug in detail
 
