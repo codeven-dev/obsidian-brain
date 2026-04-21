@@ -2,7 +2,42 @@
 
 Keep your obsidian-brain index fresh on Linux by running `obsidian-brain index` every 30 minutes via a systemd **user** timer. No root, no system-wide install.
 
-## What it does
+## Recommended: run the watcher instead
+
+Since v1.1 the `server` subcommand watches the vault by default, so if you run obsidian-brain from an MCP client you don't need a scheduled job at all — the index stays live as you edit.
+
+If you want a dedicated daemon that keeps the index fresh without any MCP client (useful on a server or a headless box), run the `watch` subcommand as a systemd user service. Create `~/.config/systemd/user/obsidian-brain-watch.service`:
+
+```ini
+[Unit]
+Description=obsidian-brain live vault watcher
+After=network.target
+
+[Service]
+Type=simple
+Environment=VAULT_PATH=/absolute/path/to/your/vault
+ExecStart=/usr/bin/obsidian-brain watch
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.local/state/obsidian-brain-watch.log
+StandardError=append:%h/.local/state/obsidian-brain-watch.err
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+
+```bash
+mkdir -p ~/.local/state
+systemctl --user daemon-reload
+systemctl --user enable --now obsidian-brain-watch.service
+systemctl --user status obsidian-brain-watch.service
+```
+
+Adjust `/usr/bin/obsidian-brain` to match `which obsidian-brain`. If you want the service to survive logout, run `sudo loginctl enable-linger $USER` once. The timer-based flow below is the fallback if you set `OBSIDIAN_BRAIN_NO_WATCH=1` or your vault lives on a filesystem where inotify doesn't fire (SMB, some NFS setups).
+
+## What it does (scheduled fallback)
 
 A systemd user timer runs `obsidian-brain index` every 30 minutes as your user account. Because everything lives under `~/.config/systemd/user/`, there is no sudo required and nothing is installed system-wide. The timer is tied to your login session and will stop when you log out — unless you enable `linger` (see the optional step below).
 

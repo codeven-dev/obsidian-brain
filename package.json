@@ -1,6 +1,6 @@
 {
   "name": "obsidian-brain",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Standalone Node MCP server: semantic search + knowledge graph + vault editing for Obsidian, no plugin required.",
   "type": "module",
   "license": "MIT",
@@ -55,6 +55,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "better-sqlite3": "^12.8.0",
+    "chokidar": "^4.0.3",
     "commander": "^14.0.3",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",

@@ -7,7 +7,7 @@
 
 A standalone Node MCP server that gives Claude (and any other MCP client) **semantic search + knowledge graph + vault editing** over an Obsidian vault. Runs as one local stdio process — no plugin, no HTTP bridge, no API key, nothing hosted. Your vault content never leaves your machine.
 
-**Contents** — [Quick start](#quick-start) · [Tool reference](#tool-reference) · [How it works](#how-it-works) · [Install in your MCP client](#install-in-your-mcp-client) · [Configuration](#configuration) · [Scheduled re-indexing](#scheduled-re-indexing) · [Troubleshooting](#troubleshooting) · [Migrating from the aaronsb plugin](#coming-from-the-obsidian-mcp-plugin) · [Development](#development--install-from-source)
+**Contents** — [Quick start](#quick-start) · [Tool reference](#tool-reference) · [How it works](#how-it-works) · [Install in your MCP client](#install-in-your-mcp-client) · [Configuration](#configuration) · [Scheduled re-indexing](#scheduled-re-indexing) · [Troubleshooting](#troubleshooting) · [Migrating from the aaronsb plugin](#coming-from-the-obsidian-mcp-plugin) · [Development](#development--install-from-source) · [Live updates](#live-updates)
 
 ## Quick start
 
@@ -480,7 +480,10 @@ Keep the plugin alongside obsidian-brain only if you actually use **Dataview** o
 
 ## Scheduled re-indexing
 
-The server doesn't watch for file changes — a periodic CLI run (`obsidian-brain index`) keeps the index fresh. Incremental, mtime-based, cheap after the first run.
+> [!NOTE]
+> Since v1.1 the live watcher (see [Live updates](#live-updates)) is the default, so most users don't need this section. Keep reading if you run `OBSIDIAN_BRAIN_NO_WATCH=1`, your vault lives on a network share where FSEvents/inotify don't fire, or you want a dedicated daemon independent of any MCP client.
+
+The scheduled-index fallback: a periodic CLI run (`obsidian-brain index`) keeps the index fresh. Incremental, mtime-based, cheap after the first run.
 
 - **macOS (LaunchAgent)** — see [docs/launchd.md](docs/launchd.md) for the plist template + load/unload flow.
 - **Linux (systemd user timer)** — see [docs/systemd.md](docs/systemd.md).
@@ -496,7 +499,10 @@ All config is via environment variables:
 |---|---|---|---|
 | `VAULT_PATH` | **yes** | — | Absolute path to the vault (folder of `.md` files). |
 | `DATA_DIR` | no | `$XDG_DATA_HOME/obsidian-brain` or `$HOME/.local/share/obsidian-brain` | Where the SQLite index + embedding cache live. |
-| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` | Hugging Face transformers-js model. Must be a sentence-embedding model that outputs a single vector. |
+| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` | Hugging Face transformers-js model that outputs sentence embeddings. Default works out of the box. Switching to a model with a different output dim requires re-indexing from scratch — run `obsidian-brain index --drop`. |
+| `OBSIDIAN_BRAIN_NO_WATCH` | no | unset | Set to `1` to disable the auto-watcher in `server` and fall back to scheduled re-indexing. |
+| `OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS` | no | `3000` | Per-file reindex debounce for the watcher. |
+| `OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS` | no | `60000` | Graph-wide community-detection debounce for the watcher. |
 
 `KG_VAULT_PATH` is accepted as a legacy alias for `VAULT_PATH`.
 
@@ -514,7 +520,7 @@ Common issues below. Long-form walkthrough with more edge cases: [docs/troublesh
   ```
 - **Slow first run** — the 22 MB `all-MiniLM-L6-v2` embedding model downloads on first use and caches under `DATA_DIR`. The server also auto-indexes the full vault on first boot. Subsequent boots are fast.
 - **`Vault path not configured`** — `VAULT_PATH` isn't set. Set it in the `env` block of your Claude Desktop / Claude Code / Jan config, or export it in your shell. `KG_VAULT_PATH` is accepted as a legacy alias.
-- **Index stale after a manual edit outside Claude** — the launchd/systemd timer re-indexes every 30 min by default. To refresh on demand, either call the `reindex` MCP tool from your client or run `VAULT_PATH=... obsidian-brain index` (source clone: `node dist/cli/index.js index`).
+- **Index stale after a manual edit outside Claude** — the `server` watcher normally picks up file changes within a few seconds. If it's not firing (vault on SMB/NFS, `OBSIDIAN_BRAIN_NO_WATCH=1` set somewhere, etc.) see [docs/troubleshooting.md → Watcher not firing](docs/troubleshooting.md#watcher-not-firing). To force an immediate refresh: call the `reindex` MCP tool from your client or run `VAULT_PATH=... obsidian-brain index`.
 
 ## Development / install from source
 
@@ -562,12 +568,30 @@ Common commands:
 | `npm run smoke` | End-to-end MCP smoke test against a throwaway temp vault. |
 | `npm run dev` | Run the server directly via `tsx` (no build step — handy for iteration). |
 
+## Live updates
+
+`obsidian-brain server` watches your vault and reindexes on file changes — no cron, no timer, no manual re-runs. Under the hood: chokidar (FSEvents on macOS, inotify on Linux) with a 3-second per-file debounce so Obsidian's ~2s autosave bursts collapse into a single reindex per editing pause. Community detection (Louvain over the whole graph) runs on a separate 60-second debounce — the only genuinely expensive operation stays batched.
+
+Knobs, if you want them:
+
+| Env var | Default | Effect |
+|---|---|---|
+| `OBSIDIAN_BRAIN_NO_WATCH` | unset | Set to `1` to disable the auto-watcher and fall back to the scheduled-index model (`obsidian-brain index` via launchd/systemd). |
+| `OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS` | `3000` | Per-file reindex debounce. |
+| `OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS` | `60000` | Graph-wide community detection debounce. |
+
+If you don't run an MCP client continuously, there's also `obsidian-brain watch` as a standalone long-running command — point a launchd agent or systemd user service at it and the index stays live without any MCP client involvement.
+
+Deeper write-up: [docs/watching.md](docs/watching.md).
+
 ## What it does *not* do (yet)
 
-- No Dataview or Bases (need a running Obsidian + plugin).
-- No live-workspace / active-editor awareness (needs Obsidian's API).
-- No file watcher — indexing is timer-driven.
-- No cloud embeddings — all local, no API calls.
+| Gap | Why | Workaround / future |
+|---|---|---|
+| **Dataview DQL queries** | DQL is evaluated inside Obsidian against Dataview's own in-memory index — we can't replicate that from outside. | We do parse inline `key:: value` fields into searchable frontmatter (covers the 80% case). No DQL. |
+| **Obsidian Bases** | New Obsidian-proprietary format. | Not planned. |
+| **Live-workspace / active-editor awareness** | Requires a signal from inside Obsidian (which note you're editing right now). | Would need a small companion Obsidian plugin pushing the active file over a local socket. Not shipped. |
+| **Cloud embeddings (OpenAI / Voyage / Cohere)** | Deliberate: fully local, zero API calls, zero egress, works offline. | If you want cloud embeddings, the `Embedder` class is easy to fork — but it's not a config knob. |
 
 ## Credits
 

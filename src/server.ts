@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createContext } from './context.js';
 import { allNodeIds } from './store/nodes.js';
+import { startWatcher, type WatcherHandle } from './pipeline/watcher.js';
 
 import { registerSearchTool } from './tools/search.js';
 import { registerReadNoteTool } from './tools/read-note.js';
@@ -20,7 +21,7 @@ import { registerReindexTool } from './tools/reindex.js';
 
 export async function startServer(): Promise<void> {
   const ctx = await createContext();
-  const server = new McpServer({ name: 'obsidian-brain', version: '1.0.0' });
+  const server = new McpServer({ name: 'obsidian-brain', version: '1.1.0' });
 
   registerSearchTool(server, ctx);
   registerReadNoteTool(server, ctx);
@@ -54,6 +55,34 @@ export async function startServer(): Promise<void> {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Live reindex on vault changes. Set OBSIDIAN_BRAIN_NO_WATCH=1 to fall
+  // back to the timer-driven model (periodic `obsidian-brain index` runs).
+  let handle: WatcherHandle | null = null;
+  if (process.env.OBSIDIAN_BRAIN_NO_WATCH !== '1') {
+    handle = startWatcher(ctx, readWatcherOptsFromEnv());
+  }
+
+  const shutdown = async () => {
+    if (handle) await handle.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
+
+function readWatcherOptsFromEnv() {
+  const debounceMs = Number(process.env.OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS);
+  const communityDebounceMs = Number(
+    process.env.OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS,
+  );
+  return {
+    debounceMs: Number.isFinite(debounceMs) && debounceMs > 0 ? debounceMs : undefined,
+    communityDebounceMs:
+      Number.isFinite(communityDebounceMs) && communityDebounceMs > 0
+        ? communityDebounceMs
+        : undefined,
+  };
 }
 
 // Auto-run when invoked as a direct entry point (e.g. `node dist/server.js`).

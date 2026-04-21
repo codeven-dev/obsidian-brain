@@ -101,6 +101,18 @@ Why periodic over watched:
 
 Tradeoff: the index lags real edits by up to the timer interval (default 30 min). For immediate freshness after a big manual edit, call the `reindex` MCP tool from chat (`src/tools/reindex.ts`) or run `obsidian-brain index` directly (or `node dist/cli/index.js index` from a local source clone).
 
+## Live sync
+
+The scheduled-index model above is still the fallback. The default, since v1.1, is a chokidar watcher spawned inside `obsidian-brain server`. See `src/pipeline/watcher.ts`. Chokidar uses the native platform API (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows), not polling, so idle CPU cost is effectively zero.
+
+Each change event is keyed by path and fed through a per-file debounce (`src/pipeline/watcher.ts:DEFAULT_DEBOUNCE_MS`, 3000 ms). Obsidian writes files on a ~2s autosave cadence, often multiple times during a single editing burst; the debounce collapses those into a single reindex per pause. When the debounce fires we call `indexSingleNote` (`src/pipeline/indexer.ts:indexSingleNote`) — the same primitive the write tools use, so incremental and batch paths share one code path: parse frontmatter + inline Dataview fields + wiki-links, re-embed, upsert node + edges, mark the graph dirty.
+
+Community detection is debounced separately on 60 s (`OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS`). Louvain runs over the entire graph and dominates cost on large vaults, so we batch it across many individual file changes. Per-file reindex stays snappy; community labels lag by up to a minute, which is fine because `detect_themes` is a background-style tool nobody refreshes every second.
+
+Flow in one line: Obsidian saves file → chokidar emits `change` → 3 s debounce → `indexSingleNote` parses, embeds, upserts node + edges → community flagged dirty → 60 s later Louvain re-runs.
+
+When to disable (`OBSIDIAN_BRAIN_NO_WATCH=1`): vault on SMB/NFS/iCloud where FSEvents/inotify don't fire reliably; shared-tenancy machines where you'd rather pay CPU on a fixed schedule than at edit time; or you already run a dedicated `obsidian-brain index` job and don't want two sources of writes.
+
 ## Why modular file layout
 
 Every source file under `src/` targets under 200 lines and has a single concern. The directory layout is:
@@ -127,10 +139,9 @@ Why this shape:
 
 obsidian-brain deliberately does not implement:
 
-- Dataview query execution
+- Dataview DQL query execution (we do parse inline `key:: value` fields into searchable frontmatter)
 - Obsidian Bases
 - Live-workspace / active-editor awareness
-- File watching / real-time indexing
 - Hybrid or cloud embeddings
 
 All of those except the last require Obsidian to be running with specific plugins loaded — they are features of Obsidian's runtime, not features of the vault on disk. obsidian-brain's whole premise is that you don't need Obsidian running. Adding these would force us to either (a) require the Obsidian API, which reintroduces the "plugin half dies when Obsidian closes" problem we're trying to avoid, or (b) reimplement Dataview etc. from scratch, which is a multi-year project.

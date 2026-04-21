@@ -10,6 +10,13 @@ export type { Database };
 export type DatabaseHandle = Database.Database;
 
 /**
+ * Default embedding dimension used when initSchema creates nodes_vec before
+ * an Embedder has declared its own dim. Matches Xenova/all-MiniLM-L6-v2.
+ * ensureVecTable() reconciles this against the actual embedder at runtime.
+ */
+const DEFAULT_EMBEDDING_DIM = 384;
+
+/**
  * Open a SQLite database at `dbPath`, enable WAL mode, load the sqlite-vec
  * extension, and initialize the schema. Returns the live handle.
  */
@@ -61,6 +68,61 @@ export function initSchema(db: DatabaseHandle): void {
       USING fts5(title, content, content='nodes', content_rowid='rowid');
 
     CREATE VIRTUAL TABLE IF NOT EXISTS nodes_vec
-      USING vec0(embedding float[384]);
+      USING vec0(embedding float[${DEFAULT_EMBEDDING_DIM}]);
   `);
+}
+
+/**
+ * Read the column dim of the current nodes_vec virtual table from
+ * sqlite_master's stored CREATE statement, or null if the table is missing.
+ */
+function readVecDim(db: DatabaseHandle): number | null {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nodes_vec'")
+    .get() as { sql: string } | undefined;
+  if (!row) return null;
+  const match = /float\[(\d+)\]/.exec(row.sql);
+  return match?.[1] ? Number(match[1]) : null;
+}
+
+/**
+ * Reconcile the nodes_vec virtual table's embedding dimension against the
+ * embedder's actual output dim. Called once per process after the embedder
+ * initialises.
+ *
+ * - Dims match: no-op.
+ * - Dim mismatch and the vec table is empty: drop + recreate at the new dim.
+ *   Lets users switch EMBEDDING_MODEL on a fresh install without ceremony.
+ * - Dim mismatch and the vec table has rows: refuse, with a clear instruction
+ *   to run `obsidian-brain index --drop` and rebuild from scratch.
+ */
+export function ensureVecTable(db: DatabaseHandle, dim: number): void {
+  const currentDim = readVecDim(db);
+  if (currentDim === dim) return;
+
+  if (currentDim !== null) {
+    const rowCount = (
+      db.prepare('SELECT COUNT(*) AS n FROM nodes_vec').get() as { n: number }
+    ).n;
+    if (rowCount > 0) {
+      throw new Error(
+        `Embedding dimension mismatch: existing index has dim ${currentDim}, ` +
+          `current model produces dim ${dim}. ` +
+          `Re-index from scratch: run \`obsidian-brain index --drop\`.`,
+      );
+    }
+    db.exec('DROP TABLE nodes_vec');
+  }
+
+  db.exec(`CREATE VIRTUAL TABLE nodes_vec USING vec0(embedding float[${dim}])`);
+}
+
+/**
+ * Drop every embedding + sync row so the next index run rebuilds from
+ * scratch. Called by `obsidian-brain index --drop`, typically when switching
+ * EMBEDDING_MODEL to one with a different output dim.
+ */
+export function dropEmbeddingState(db: DatabaseHandle): void {
+  db.exec('DROP TABLE IF EXISTS nodes_vec');
+  db.exec('DELETE FROM sync');
 }

@@ -2,12 +2,14 @@
 import { Command } from 'commander';
 import { createContext } from '../context.js';
 import { startServer } from '../server.js';
+import { dropEmbeddingState } from '../store/db.js';
+import { startWatcher } from '../pipeline/watcher.js';
 
 const program = new Command();
 program
   .name('obsidian-brain')
   .description('Semantic search + knowledge graph + vault editing for Obsidian.')
-  .version('1.0.0');
+  .version('1.1.0');
 
 program
   .command('server')
@@ -22,12 +24,53 @@ program
   .command('index')
   .description('Scan the vault and update the knowledge-graph index (incremental)')
   .option('-r, --resolution <n>', 'Louvain resolution', parseFloat, 1.0)
-  .action(async (opts: { resolution: number }) => {
+  .option(
+    '--drop',
+    'Drop all embeddings + sync state before indexing. Required when switching EMBEDDING_MODEL to one with a different output dim.',
+    false,
+  )
+  .action(async (opts: { resolution: number; drop: boolean }) => {
     const ctx = await createContext();
+    if (opts.drop) {
+      dropEmbeddingState(ctx.db);
+      process.stderr.write(
+        'obsidian-brain: dropped existing embeddings + sync state\n',
+      );
+    }
     await ctx.ensureEmbedderReady();
     const stats = await ctx.pipeline.index(ctx.config.vaultPath, opts.resolution);
     process.stdout.write(`${JSON.stringify(stats, null, 2)}\n`);
   });
+
+program
+  .command('watch')
+  .description(
+    'Long-running process: keep the index live by reindexing on vault changes. Use this if you want to run the watcher independently from an MCP client (via launchd/systemd).',
+  )
+  .option('--debounce <ms>', 'Per-file reindex debounce (ms)', (v) => parseInt(v, 10), 3000)
+  .option(
+    '--community-debounce <ms>',
+    'Graph-wide community detection debounce (ms)',
+    (v) => parseInt(v, 10),
+    60000,
+  )
+  .action(
+    async (opts: { debounce: number; communityDebounce: number }) => {
+      const ctx = await createContext();
+      await ctx.ensureEmbedderReady();
+      const handle = startWatcher(ctx, {
+        debounceMs: opts.debounce,
+        communityDebounceMs: opts.communityDebounce,
+      });
+      const shutdown = async () => {
+        await handle.close();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+      await new Promise<void>(() => {}); // hold process open
+    },
+  );
 
 program
   .command('search <query>')

@@ -1,5 +1,5 @@
 import { mkdirSync } from 'fs';
-import { openDb, type DatabaseHandle } from './store/db.js';
+import { openDb, ensureVecTable, type DatabaseHandle } from './store/db.js';
 import { Embedder } from './embeddings/embedder.js';
 import { Search } from './search/unified.js';
 import { VaultWriter } from './vault/writer.js';
@@ -37,6 +37,7 @@ export async function createContext(): Promise<ServerContext> {
   const ensureEmbedderReady = async (): Promise<void> => {
     if (embedderReady) return;
     await embedder.init();
+    ensureVecTable(db, embedder.dim);
     embedderReady = true;
   };
 

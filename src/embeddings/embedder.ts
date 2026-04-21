@@ -1,6 +1,6 @@
 import { pipeline } from '@huggingface/transformers';
 
-const MODEL = 'Xenova/all-MiniLM-L6-v2';
+const DEFAULT_MODEL = 'Xenova/all-MiniLM-L6-v2';
 
 // The `pipeline()` generic return type from @huggingface/transformers is a
 // tagged union over every supported task, which hits TS2590 ("union type too
@@ -14,12 +14,40 @@ interface Extractor {
 
 export class Embedder {
   private extractor: Extractor | null = null;
+  private _dim: number | null = null;
+  private readonly _model: string;
+
+  constructor(model?: string) {
+    this._model = model ?? process.env.EMBEDDING_MODEL ?? DEFAULT_MODEL;
+  }
 
   async init(): Promise<void> {
-    const p = (await pipeline('feature-extraction', MODEL, {
+    const p = (await pipeline('feature-extraction', this._model, {
       dtype: 'q8',
     })) as unknown as Extractor;
     this.extractor = p;
+    // Probe output length so callers can validate the DB's vec0 dim before
+    // any embeds are written. Space is a cheap input.
+    const probe = await p(' ', { pooling: 'mean', normalize: true });
+    const vec = probe.tolist()[0];
+    if (!vec || vec.length === 0) {
+      throw new Error(
+        `Embedder produced empty vector for model "${this._model}". ` +
+          `Check the model exists on Hugging Face and outputs sentence embeddings.`,
+      );
+    }
+    this._dim = vec.length;
+  }
+
+  get dim(): number {
+    if (this._dim === null) {
+      throw new Error('Embedder not initialized. Call init() first.');
+    }
+    return this._dim;
+  }
+
+  get model(): string {
+    return this._model;
   }
 
   async embed(text: string): Promise<Float32Array> {

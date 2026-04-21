@@ -1,6 +1,59 @@
 # macOS LaunchAgent setup
 
-## What it does
+## Recommended: run the watcher instead
+
+Since v1.1 the `server` subcommand watches the vault by default, so if you already run obsidian-brain from an MCP client (Claude Desktop, Cursor, etc.) you don't need a scheduled job at all — the index stays live as you edit.
+
+If you want a dedicated daemon that keeps the index fresh without any MCP client running (useful on a server, or if you quit Claude Desktop between sessions), point a LaunchAgent at the `watch` subcommand:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.you.obsidian-brain-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/obsidian-brain</string>
+        <string>watch</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VAULT_PATH</key>
+        <string>/absolute/path/to/your/vault</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/obsidian-brain-watch.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/obsidian-brain-watch.err</string>
+</dict>
+</plist>
+```
+
+Save as `~/Library/LaunchAgents/com.you.obsidian-brain-watch.plist`, then:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.you.obsidian-brain-watch.plist
+launchctl list | grep obsidian-brain-watch
+```
+
+`KeepAlive=true` restarts the process if it exits; `RunAtLoad=true` starts it immediately at login. Stop with `launchctl unload` on the same path. The rest of this document (the scheduled-index plist below) is the fallback if you set `OBSIDIAN_BRAIN_NO_WATCH=1` or your vault lives somewhere FSEvents can't observe.
+
+## What it does (scheduled fallback)
 
 This sets up a macOS LaunchAgent that runs `obsidian-brain index` every 30 minutes against your vault. The `index` command is incremental — it only re-embeds files whose mtime has changed since the last run — so each tick is cheap. There is no long-running daemon to manage: `launchd` owns the schedule and spawns the process when the timer fires.
 

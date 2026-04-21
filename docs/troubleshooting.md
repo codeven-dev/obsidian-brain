@@ -20,6 +20,8 @@ For architecture context (how the indexer, SQLite cache, and MCP server fit toge
 - [Embeddings look wrong or search returns irrelevant results](#embeddings-look-wrong-or-search-returns-irrelevant-results)
 - [tools/list returns -32603 Cannot read properties of undefined (reading '_zod')](#toolslist-returns--32603-cannot-read-properties-of-undefined-reading-_zod)
 - [Race condition: edit appears in Claude but not in search for 30 min](#race-condition-edit-appears-in-claude-but-not-in-search-for-30-min)
+- [Watcher not firing](#watcher-not-firing)
+- [Embedding dimension mismatch error on startup](#embedding-dimension-mismatch-error-on-startup)
 - [Still stuck?](#still-stuck)
 
 ---
@@ -280,6 +282,43 @@ tail -n 200 ~/Library/Logs/Claude/mcp-server-obsidian-brain.log
 ```
 
 You can force a refresh immediately by calling the `reindex` tool, or by running the CLI command shown in the "Index stale" section above.
+
+---
+
+## Watcher not firing
+
+**Summary.** `obsidian-brain server` is running but edits made in Obsidian don't show up in `search` until you call `reindex` manually.
+
+**Cause.** One of:
+
+1. Vault on a network drive. macOS FSEvents and Linux inotify don't reliably observe changes on SMB/NFS shares (and iCloud Drive is its own mess). Workaround: set `OBSIDIAN_BRAIN_NO_WATCH=1` and use a scheduled `obsidian-brain index` via launchd / systemd instead.
+2. `OBSIDIAN_BRAIN_NO_WATCH=1` is set somewhere you forgot about — inherited from a shell, a launchd `EnvironmentVariables` block, or a systemd `Environment=` line.
+3. Obsidian's own save debounce is longer than our reindex debounce. If the file hasn't actually landed on disk yet, chokidar can't see it. Check Obsidian → Settings → Files and links.
+4. The file isn't a `.md`. The watcher ignores everything else by design.
+
+**Fix.** First confirm the watcher started — on stderr you should see a line like:
+
+```
+obsidian-brain: watching /absolute/path/to/vault for changes
+```
+
+If that line is missing, check `OBSIDIAN_BRAIN_NO_WATCH`. If it's present, the issue is one of the platform causes above.
+
+---
+
+## Embedding dimension mismatch error on startup
+
+**Summary.** Server aborts with an error about embedding dimensions not matching the stored index.
+
+**Cause.** You changed `EMBEDDING_MODEL` to a model whose output dimensionality is different from the model used when the index was originally built (e.g. moved from `all-MiniLM-L6-v2` at 384 dims to `all-mpnet-base-v2` at 768 dims). The stored vectors and the new model are incompatible.
+
+**Fix.** Rebuild the index from scratch with the new model:
+
+```bash
+VAULT_PATH=/path/to/vault EMBEDDING_MODEL=Xenova/all-mpnet-base-v2 obsidian-brain index --drop
+```
+
+`--drop` wipes stored embeddings and per-file sync state, then reindexes the vault fresh. The vault content itself is untouched.
 
 ---
 

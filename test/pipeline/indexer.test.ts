@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { openDb, type DatabaseHandle } from '../../src/store/db.js';
 import { getNode } from '../../src/store/nodes.js';
 import { getEdgesBySource } from '../../src/store/edges.js';
@@ -66,4 +68,68 @@ describe.sequential('IndexPipeline', () => {
 
     freshDb.close();
   }, 120_000);
+});
+
+describe.sequential('IndexPipeline.indexSingleNote', () => {
+  let db: DatabaseHandle;
+  let embedder: Embedder;
+  let pipeline: IndexPipeline;
+  let tmpVault: string;
+
+  beforeAll(async () => {
+    db = openDb(':memory:');
+    embedder = new Embedder();
+    await embedder.init();
+    pipeline = new IndexPipeline(db, embedder);
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-test-'));
+  }, 120_000);
+
+  afterAll(async () => {
+    db.close();
+    await embedder.dispose();
+    rmSync(tmpVault, { recursive: true, force: true });
+  });
+
+  it('adds a brand-new file', async () => {
+    writeFileSync(
+      join(tmpVault, 'one.md'),
+      '# One\n\nFirst note with a [[two]] link.\n',
+    );
+    const result = await pipeline.indexSingleNote(tmpVault, 'one.md', 'add');
+    expect(result.indexed).toBe(true);
+    expect(getNode(db, 'one.md')).toBeDefined();
+    expect(getEdgesBySource(db, 'one.md').length).toBe(1);
+  }, 60_000);
+
+  it('updates an existing file on change', async () => {
+    writeFileSync(
+      join(tmpVault, 'one.md'),
+      '# One updated\n\nNo longer links anywhere.\n',
+    );
+    // bump mtime beyond the previous index's recorded mtime
+    await new Promise((r) => setTimeout(r, 30));
+    const result = await pipeline.indexSingleNote(tmpVault, 'one.md', 'change');
+    expect(result.indexed).toBe(true);
+    expect(getNode(db, 'one.md')?.title).toBe('one');
+    expect(getEdgesBySource(db, 'one.md')).toHaveLength(0);
+  }, 60_000);
+
+  it('deletes a file on unlink', async () => {
+    const result = await pipeline.indexSingleNote(tmpVault, 'one.md', 'unlink');
+    expect(result.deleted).toBe(true);
+    expect(getNode(db, 'one.md')).toBeUndefined();
+  });
+
+  it('skips indexing when mtime has not advanced', async () => {
+    writeFileSync(join(tmpVault, 'stable.md'), '# Stable\n');
+    const first = await pipeline.indexSingleNote(tmpVault, 'stable.md', 'add');
+    expect(first.indexed).toBe(true);
+    const second = await pipeline.indexSingleNote(
+      tmpVault,
+      'stable.md',
+      'change',
+    );
+    expect(second.skipped).toBe(true);
+    expect(second.indexed).toBe(false);
+  }, 60_000);
 });
