@@ -252,7 +252,7 @@ Equivalent JSON (Jan writes this itself under `~/Library/Application Support/Jan
 }
 ```
 
-**Use STDIO (what we showed), not HTTP.** Jan 0.7.x's rmcp client has an open bug with Streamable-HTTP that kills `tools/list` after `initialize` ([rust-sdk#468](https://github.com/modelcontextprotocol/rust-sdk/issues/468)). obsidian-brain is stdio-only by design, so this doesn't apply directly — but don't wrap it in an HTTP proxy for Jan or you'll hit it. Full walkthrough: [docs/jan.md](docs/jan.md).
+**Use STDIO, not HTTP.** Jan 0.7.x's rmcp client has an open bug with Streamable-HTTP that kills `tools/list` right after `initialize` ([rust-sdk#468](https://github.com/modelcontextprotocol/rust-sdk/issues/468)). obsidian-brain is stdio-only anyway, but don't wrap it in an HTTP proxy for Jan or you'll trip the bug. Full walkthrough: [docs/jan.md](docs/jan.md).
 
 </details>
 
