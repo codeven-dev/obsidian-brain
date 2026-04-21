@@ -511,6 +511,7 @@ All config is via environment variables:
 | `OBSIDIAN_BRAIN_NO_CATCHUP` | no | unset | Set to `1` to disable the startup catchup reindex that picks up edits made while the server was down. |
 | `OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS` | no | `3000` | Per-file reindex debounce for the watcher. |
 | `OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS` | no | `60000` | Graph-wide community-detection debounce for the watcher. |
+| `OBSIDIAN_BRAIN_TOOL_TIMEOUT_MS` | no | `30000` | Per-tool-call timeout (ms). If a handler runs longer, the server returns an MCP error pointing at the log path instead of hanging. |
 
 `KG_VAULT_PATH` is accepted as a legacy alias for `VAULT_PATH`.
 
@@ -529,6 +530,8 @@ Common issues below. Long-form walkthrough with more edge cases: [docs/troublesh
 - **Slow first run** — the 22 MB `all-MiniLM-L6-v2` embedding model downloads on first use and caches under `DATA_DIR`. The server also auto-indexes the full vault on first boot. Subsequent boots are fast.
 - **`Vault path not configured`** — `VAULT_PATH` isn't set. Set it in the `env` block of your Claude Desktop / Claude Code / Jan config, or export it in your shell. `KG_VAULT_PATH` is accepted as a legacy alias.
 - **Index stale after a manual edit outside Claude** — the `server` watcher normally picks up file changes within a few seconds. If it's not firing (vault on SMB/NFS, `OBSIDIAN_BRAIN_NO_WATCH=1` set somewhere, etc.) see [docs/troubleshooting.md → Watcher not firing](docs/troubleshooting.md#watcher-not-firing). To force an immediate refresh: call the `reindex` MCP tool from your client or run `VAULT_PATH=... obsidian-brain index`.
+- **Tool call hangs for minutes then "No result received" in Claude Desktop** — almost always a client-side stdio transport stall, not a server hang. Since v1.2.1 the server has its own 30s timeout that returns an actionable error. See [docs/troubleshooting.md → Tool calls hang for 4 minutes](docs/troubleshooting.md#tool-calls-hang-for-4-minutes-then-time-out-client-side) for how to tell which side the hang was on via the log, and [Collecting MCP server logs](docs/troubleshooting.md#collecting-mcp-server-logs) for the path.
+- **Running two MCP clients against the same vault** — fine since v1.2.1 (SQLite WAL + `busy_timeout = 5000`), with minor inefficiencies. Details at [docs/troubleshooting.md → Running multiple MCP clients](docs/troubleshooting.md#running-multiple-mcp-clients-against-the-same-vault).
 
 ## Development / install from source
 
