@@ -1,7 +1,7 @@
 import { homedir } from 'os';
 import { join } from 'path';
 
-export interface KGConfig {
+export interface Config {
   vaultPath: string;
   dataDir: string;
   dbPath: string;
@@ -12,7 +12,7 @@ export interface ConfigOverrides {
   dataDir?: string;
 }
 
-export function resolveConfig(overrides: ConfigOverrides): KGConfig {
+export function resolveConfig(overrides: ConfigOverrides): Config {
   // VAULT_PATH is the documented name; KG_VAULT_PATH is the legacy alias
   // carried over from obra so existing users don't break.
   const vaultPath = overrides.vaultPath

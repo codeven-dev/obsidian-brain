@@ -13,7 +13,8 @@
     "cli": "tsx src/cli/index.ts",
     "dev": "tsx src/server.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke": "tsx scripts/mcp-smoke.ts"
   },
   "engines": {
     "node": ">=20"
