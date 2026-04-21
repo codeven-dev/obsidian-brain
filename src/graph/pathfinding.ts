@@ -65,14 +65,7 @@ export function findPaths(
     for (let i = 0; i < nodePath.length - 1; i++) {
       const src = nodePath[i]!;
       const tgt = nodePath[i + 1]!;
-      // Grab the first edge attribute bag we find in either direction.
-      let context = '';
-      if (graph.hasEdge(src, tgt)) {
-        context = (graph.getEdgeAttribute(src, tgt, 'context') as string) ?? '';
-      } else if (graph.hasEdge(tgt, src)) {
-        context = (graph.getEdgeAttribute(tgt, src, 'context') as string) ?? '';
-      }
-      edges.push({ sourceId: src, targetId: tgt, context });
+      edges.push({ sourceId: src, targetId: tgt, context: firstEdgeContext(graph, src, tgt) });
     }
     return { nodes: nodePath, edges, length: nodePath.length - 1 };
   });
@@ -137,13 +130,29 @@ export function extractSubgraph(
   for (const id of visited) {
     for (const nid of graph.outNeighbors(id)) {
       if (visited.has(nid)) {
-        const context = (graph.getEdgeAttribute(id, nid, 'context') as string) ?? '';
-        edges.push({ sourceId: id, targetId: nid, context });
+        edges.push({ sourceId: id, targetId: nid, context: firstEdgeContext(graph, id, nid) });
       }
     }
   }
 
   return { nodes, edges };
+}
+
+/**
+ * Return the `context` attribute of the first edge from `src` to `tgt` (either
+ * direction). Safe for multigraphs — uses edge keys instead of source/target
+ * lookups, which fail on multigraphs. Returns '' when no edge exists.
+ */
+function firstEdgeContext(graph: GraphInstance, src: string, tgt: string): string {
+  const forward = graph.hasEdge(src, tgt) ? graph.edges(src, tgt) : [];
+  if (forward.length > 0) {
+    return (graph.getEdgeAttribute(forward[0]!, 'context') as string) ?? '';
+  }
+  const backward = graph.hasEdge(tgt, src) ? graph.edges(tgt, src) : [];
+  if (backward.length > 0) {
+    return (graph.getEdgeAttribute(backward[0]!, 'context') as string) ?? '';
+  }
+  return '';
 }
 
 /**

@@ -26,6 +26,7 @@ export interface GraphInstance {
   hasEdge(source: string, target: string): boolean;
   getNodeAttribute(id: string, key: string): unknown;
   getEdgeAttribute(source: string, target: string, key: string): unknown;
+  getEdgeAttribute(edgeKey: string, key: string): unknown;
   forEachNode(cb: (id: string, attrs: Record<string, unknown>) => void): void;
   forEachEdge(
     cb: (
@@ -41,6 +42,7 @@ export interface GraphInstance {
   degree(id: string): number;
   nodes(): string[];
   edges(): string[];
+  edges(source: string, target: string): string[];
 }
 
 type GraphCtor = new (options?: GraphOptions) => GraphInstance;
