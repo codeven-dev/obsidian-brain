@@ -33,7 +33,7 @@ Wire obsidian-brain into your MCP client. Example for **Claude Desktop** (`~/Lib
 Quit Claude Desktop (⌘Q) and relaunch. For other clients — Claude Code, Cursor, VS Code, Jan, Cline, Zed, LM Studio, Opencode, Gemini CLI, Warp, JetBrains AI, Codex CLI, Windsurf — see [Install in your MCP client](#install-in-your-mcp-client).
 
 > [!TIP]
-> The `@latest` tag on `obsidian-brain@latest` makes npx re-resolve the newest published version on every launch. Every future release auto-picks-up after a client restart — no manual upgrade needed. Drop the `@latest` (or pin to a specific version like `obsidian-brain@1.5.5`) if you'd rather cache a known-good version and update on your own schedule.
+> The `@latest` tag on `obsidian-brain@latest` makes npx re-resolve the newest published version on every launch. Every future release auto-picks-up after a client restart — no manual upgrade needed. Drop the `@latest` (or pin to a specific version like `obsidian-brain@1.6.0`) if you'd rather cache a known-good version and update on your own schedule.
 
 > [!NOTE]
 > On first boot the server **auto-indexes your vault** and downloads a ~34 MB embedding model (the v1.5.2 default `Xenova/bge-small-en-v1.5`). Tools may take 30–60 s to appear in the client. Subsequent boots are instant.
@@ -113,7 +113,7 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain@latest search "some query
 
 ### Maintenance
 
-- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe. Since v1.4.0 a bare `reindex({})` defaults `resolution: 1.0` and always re-runs Louvain community detection + orphan pruning (earlier versions could silently no-op when nothing had changed).
+- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe. Since v1.4.0 a bare `reindex({})` defaults `resolution: 1.0` and always re-runs Louvain community detection + orphan pruning (earlier versions could silently no-op when nothing had changed). Since v1.5.8 the response includes `stubsPruned: N` — this is the one-shot migration path for users upgrading from v1.5.7 or earlier who accumulated orphan stubs from the pre-fix `move_note` / `delete_note` bugs.
   > *"Use `reindex` to refresh the index after I bulk-edited files outside Claude."*
 
 ## How it works
@@ -748,7 +748,7 @@ Three kinds of data only exist inside a running Obsidian process: Dataview DQL r
 
 When the plugin is installed and Obsidian is open, `active_note` (v1.2.0), `dataview_query` (v1.3.0), and `base_query` (v1.4.0) light up. Every other tool keeps working with or without the plugin.
 
-**Version rule of thumb:** install the **same major.minor** on both sides (server `1.5.x` ↔ plugin `1.5.x`) — that's the tested, supported combo. Patch-version drift (e.g. server `1.5.4` + plugin `1.5.2`) is fine. Other combos often work via capability gating in `discovery.json` but aren't guaranteed — see [Version compatibility](docs/plugin.md#version-compatibility).
+**Version rule of thumb:** install the **same major.minor** on both sides (server `1.6.x` ↔ plugin `1.6.x`) — that's the tested, supported combo. Patch-version drift (e.g. server `1.6.0` + plugin `1.5.5`) is fine. Other combos often work via capability gating in `discovery.json` but aren't guaranteed — see [Version compatibility](docs/plugin.md#version-compatibility).
 
 Details, security model, troubleshooting: [`docs/plugin.md`](docs/plugin.md).
 
