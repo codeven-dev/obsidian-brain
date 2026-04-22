@@ -49,6 +49,9 @@ When the plugin is absent or unreachable, the plugin-dependent tools return an e
 
 ## Dataview
 
+> [!IMPORTANT]
+> **Dataview is a separate third-party community plugin, not built by us and not shipped with Obsidian.** You install it from Obsidian → Settings → Community plugins → Browse → search "Dataview" (by blacksmithgu) → Install → Enable, then reload Obsidian once so its API registers on `app.plugins.plugins.dataview.api`. `dataview_query` returns 424 with a clear `not_installed` / `not_enabled` / `api_not_ready` message until that's done. Full DQL syntax reference: [blacksmithgu.github.io/obsidian-dataview](https://blacksmithgu.github.io/obsidian-dataview/). Step-by-step walkthrough in [Installing Dataview](#installing-dataview) below.
+
 ### What "the Dataview community plugin" actually is
 
 Three pieces of software are involved in a single `dataview_query` call, with overlapping names. Two are ours; one isn't:

@@ -41,7 +41,10 @@ All configuration is via environment variables. Only `VAULT_PATH` is required.
 |---|---|---|---|
 | `VAULT_PATH` | **yes** | — | Absolute path to the vault (folder of `.md` files). |
 | `DATA_DIR` | no | `$XDG_DATA_HOME/obsidian-brain` or `$HOME/.local/share/obsidian-brain` | Where the SQLite index + embedding cache live. |
-| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` | Sentence-embedding checkpoint (any transformers.js-compatible model). Switching models triggers an automatic reindex — no `--drop` required. See [architecture](architecture.md) for the model-swap flow. |
+| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` (transformers) · `nomic-embed-text` (ollama) | Sentence-embedding checkpoint. With `EMBEDDING_PROVIDER=transformers` (default) this is any transformers.js-compatible model; with `EMBEDDING_PROVIDER=ollama` it names an Ollama-pullable model. Switching models (or providers) triggers an automatic reindex on next boot — no `--drop` required. |
+| `EMBEDDING_PROVIDER` | no | `transformers` | Embedder backend: `transformers` (local, zero setup) or `ollama` (routes through a local Ollama server via `/api/embeddings`, v1.5.0+). |
+| `OLLAMA_BASE_URL` | no | `http://localhost:11434` | Only read when `EMBEDDING_PROVIDER=ollama`. |
+| `OLLAMA_EMBEDDING_DIM` | no | unset | Declared output dim for the Ollama model. If unset, the server probes the model on first startup. |
 | `OBSIDIAN_BRAIN_NO_WATCH` | no | unset | Set to `1` to disable the live watcher and fall back to scheduled re-indexing. |
 | `OBSIDIAN_BRAIN_NO_CATCHUP` | no | unset | Set to `1` to disable the startup catchup reindex. |
 | `OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS` | no | `3000` | Per-file reindex debounce for the watcher. |
@@ -52,7 +55,7 @@ All configuration is via environment variables. Only `VAULT_PATH` is required.
 
 ## Next steps
 
-- Browse the [tool reference](tools.md) — 15 tools grouped by intent.
-- Install the optional [companion plugin](plugin.md) to unlock `active_note` and `dataview_query`.
+- Browse the [tool reference](tools.md) — 16 tools grouped by intent.
+- Install the optional [companion plugin](plugin.md) to unlock `active_note`, `dataview_query`, and `base_query`.
 - Read [Architecture](architecture.md) for *why* stdio, SQLite, and local embeddings.
 - If something goes wrong: [Troubleshooting](troubleshooting.md).

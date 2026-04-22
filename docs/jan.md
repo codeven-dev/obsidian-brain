@@ -22,7 +22,7 @@ Then in [Jan](https://jan.ai):
    - **Command**: the absolute path from `which obsidian-brain` (typically `/opt/homebrew/bin/obsidian-brain` on macOS Homebrew, `/usr/bin/obsidian-brain` or an nvm-scoped path on Linux). Use an absolute path, **not** a bare `obsidian-brain`. Jan spawns subprocesses with a minimal `PATH` that usually doesn't include your shell's install.
    - **Arguments**: `server`
    - **Environment variables**: `VAULT_PATH=/absolute/path/to/your/vault`
-3. Save and enable the server. Jan will spawn the process and send `initialize` followed by `tools/list`. First boot auto-indexes the vault (30–60 s while the 22 MB embedding model downloads). Once the index is built you should see the 14 obsidian-brain tools appear in the MCP panel.
+3. Save and enable the server. Jan will spawn the process and send `initialize` followed by `tools/list`. First boot auto-indexes the vault (30–60 s while the 22 MB embedding model downloads). Once the index is built you should see the 16 obsidian-brain tools appear in the MCP panel.
 
 ### Alternative: npx (no global install)
 
@@ -65,7 +65,7 @@ Start a new chat in Jan and ask:
 
 > List my obsidian-brain tools.
 
-The assistant should respond naming all 15 tools:
+The assistant should respond naming all 16 tools:
 
 - `search`
 - `read_note`
@@ -81,7 +81,8 @@ The assistant should respond naming all 15 tools:
 - `delete_note`
 - `reindex`
 - `active_note` *(requires the [companion plugin](./plugin.md) + Obsidian running)*
-- `dataview_query` *(requires the [companion plugin](./plugin.md) v0.2.0+ and the Dataview community plugin enabled in the vault)*
+- `dataview_query` *(requires the [companion plugin](./plugin.md) v0.2.0+ and the third-party Dataview community plugin by [blacksmithgu](https://github.com/blacksmithgu/obsidian-dataview) installed + enabled in the vault)*
+- `base_query` *(requires the [companion plugin](./plugin.md) v1.4.0+, Obsidian ≥ 1.10.0, and the core Bases plugin enabled)*
 
 Alternatively, open the Jan MCP panel — it lists the tools once `tools/list` succeeds.
 

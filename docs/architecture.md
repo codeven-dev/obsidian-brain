@@ -8,7 +8,7 @@ This document explains *why* obsidian-brain is built the way it is. The [Quick s
 flowchart LR
     CLI["cli/<br/>(user entry)"] --> Server["server.ts"]
     CLI --> Pipeline["pipeline/"]
-    Server --> Tools["tools/<br/>(13 handlers)"]
+    Server --> Tools["tools/<br/>(16 handlers)"]
     Tools --> Pipeline
     Tools --> Search["search/"]
     Tools --> Graph["graph/"]
@@ -35,8 +35,9 @@ flowchart LR
     Diff -->|"yes or new"| Parse["Parse frontmatter<br/>+ wiki-links"]
     Diff -->|"no"| Skip[Skip]
     Diff -->|"deleted"| Remove["deleteNode()"]
-    Parse --> Embed["Embed<br/>(title + tags + first ¶)"]
-    Embed --> Store[("SQLite")]
+    Parse --> Chunk["Chunk<br/>(heading-aware,<br/>code/LaTeX preserved)"]
+    Chunk --> Embed["Embed per chunk<br/>(SHA-256 content-hash dedup)"]
+    Embed --> Store[("SQLite<br/>nodes · edges · chunks<br/>FTS5 · chunks_vec")]
     Remove --> Store
     Skip --> Done
     Store --> Done
@@ -64,9 +65,11 @@ The index is a single `better-sqlite3` file that holds everything: graph nodes, 
 
 Reference points in the code:
 
-- Schema: `src/store/db.ts:35` — `nodes`, `edges`, `communities`, `sync`, plus the FTS5 virtual table `nodes_fts` and the sqlite-vec virtual table `nodes_vec`. The vec0 dim is reconciled against the embedder at runtime via `ensureVecTable` (`src/store/db.ts:99`). Since v1.2.2 `deleteNode` also cascades to the `communities` table via `pruneNodeFromCommunities` (`src/store/communities.ts:32`), which filters the deleted id out of every community's `node_ids` array and removes rows that became empty.
-- Vector kNN: `src/store/embeddings.ts:39` — `embedding MATCH ? AND k = ?` against `vec0`.
-- Full-text: `src/store/fulltext.ts:27` — standard FTS5 `MATCH` with `snippet()` for excerpts.
+- Schema: `src/store/db.ts` — `nodes`, `edges`, `communities`, `sync`, `chunks`, `index_metadata`, plus the FTS5 virtual table `nodes_fts` (tokenizer `porter unicode61` since v1.4.0) and two sqlite-vec virtual tables: `nodes_vec` (mean-pooled note-level vector, kept for compat) and `chunks_vec` (per-chunk vectors, the main retrieval target since v1.4.0). The vec0 dim is reconciled against the embedder at runtime and `index_metadata` records the active embedding model/dim/provider so a mismatch on reboot triggers an auto-reindex (`src/pipeline/bootstrap.ts`). Since v1.2.2 `deleteNode` also cascades to the `communities` table via `pruneNodeFromCommunities` (`src/store/communities.ts`); since v1.4.0 that prune also regenerates each affected cluster's `summary` string via `buildSummary` so `nodeIds` and `summary` stay consistent.
+- Chunking: `src/embeddings/chunker.ts` (~337 LoC) — heading-aware recursive chunker, preserves code fences + `$$…$$` LaTeX via U+E000/U+E001 sentinel masking, dedups unchanged chunks across reindexes via SHA-256 content-hash so edits to a single section skip re-embedding the rest.
+- Vector kNN: `src/store/embeddings.ts` + `src/store/chunks.ts` — `embedding MATCH ? AND k = ?` against `vec0`; chunk-level results group by `node_id` with max-score-per-note unless `unique: 'chunks'` is requested.
+- Full-text: `src/store/fulltext.ts` — FTS5 `MATCH` with `ORDER BY bm25(nodes_fts, 5.0, 1.0)` (5× title weight vs body, since v1.4.0) and `snippet()` for excerpts.
+- Hybrid fusion: `src/search/unified.ts` `hybrid()` — runs `semantic()` and `fulltext()` in parallel and fuses via Reciprocal Rank Fusion (RRF, k=60). This is the default `search` mode since v1.4.0.
 - Sync state: `src/store/sync.ts` — tracks `(path, mtime, indexed_at)` for incremental re-index.
 
 Why one file for all of it:
@@ -79,7 +82,7 @@ Tradeoff: sqlite-vec does a full scan for kNN. This is fine at the vault sizes w
 
 ## Why local embeddings (Xenova all-MiniLM-L6-v2)
 
-The default model is `Xenova/all-MiniLM-L6-v2` (`src/embeddings/embedder.ts:3`), overridable via `EMBEDDING_MODEL` (`src/embeddings/embedder.ts:21`), run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization.
+The default model is `Xenova/all-MiniLM-L6-v2` run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization (`src/embeddings/embedder.ts`).
 
 Why not an API like OpenAI's `text-embedding-3-small`:
 
@@ -87,7 +90,7 @@ Why not an API like OpenAI's `text-embedding-3-small`:
 - **No API key, no quota, no billing.** Important for a tool that re-embeds on every file save without anyone thinking about it.
 - **~22 MB one-time model download**, then ~40 ms per note on CPU. Fast enough that the first full index of a 10k-note vault completes in minutes and incremental re-indexing is imperceptible.
 
-Tradeoff: quality is measurably below modern API embeddings on hard semantic-similarity benchmarks. If this matters for your vault, the model is pluggable — the embedder reads `EMBEDDING_MODEL` from env (`src/embeddings/embedder.ts:21`), probes output dim on init, and reconciles against the stored vec0 table. Any transformers.js-compatible sentence-embedding model works. If the new model's output dim differs from the stored index, the server errors with an instruction to run `obsidian-brain index --drop` and reindex (`src/store/db.ts:99-120`). `Embedder.buildEmbeddingText` is deliberately simple (title + tags + first paragraph) so it works across model choices.
+Tradeoff: quality is measurably below modern API embeddings on hard semantic-similarity benchmarks. Since v1.4.0 the embedder is pluggable behind an `Embedder` interface (`src/embeddings/types.ts`). `src/embeddings/factory.ts` selects the backend on `EMBEDDING_PROVIDER` (`transformers` default; `ollama` alternative since v1.5.0); each backend reads `EMBEDDING_MODEL` to pick the specific checkpoint. The `index_metadata` table stores the active `embedding_model` + `embedding_dim` + `embedding_provider`; on startup `src/pipeline/bootstrap.ts` compares them against the current embedder's `modelIdentifier()`/`dimensions()` and auto-clears the chunk + vec tables if they've changed, so switching models is safe — **no manual `--drop` required**. The Ollama backend (`src/embeddings/ollama.ts`) also injects task-type prefixes automatically for the asymmetric embedding models that need them (`nomic-embed-text` gets `search_query: ` / `search_document: `; `qwen*` gets `Query: ` on the query side; `mxbai-embed-large` / `mixedbread*` get `Represent this sentence for searching relevant passages: ` on queries).
 
 ## Why incremental mtime sync
 
@@ -128,7 +131,7 @@ Every source file under `src/` targets under 200 lines and has a single concern.
 - `src/search/` — unified semantic + full-text search surface.
 - `src/resolve/` — fuzzy note-name resolution used by tools that accept human-typed note titles.
 - `src/pipeline/` — the indexing orchestrator (`indexer.ts`) that stitches vault parsing, store writes, embedding, and community detection together; plus the chokidar watcher (`watcher.ts`) that drives `indexSingleNote` on debounced file-change events.
-- `src/tools/` — one file per MCP tool. `register.ts` is the shared Zod/schema helper; everything else is a tool handler.
+- `src/tools/` — one file per MCP tool. `register.ts` is the shared Zod/schema helper + (since v1.5.0) the `{data, context}` envelope wrapper — tools that return a `ContextualResult` get their `context.next_actions` serialised alongside `data`; tools that return a plain payload stay unchanged for backcompat. `hints.ts` holds the per-tool hint generators (`search`, `read_note`, `find_connections`, `delete_note` opt in).
 
 Why this shape:
 
@@ -144,14 +147,14 @@ Three capabilities only exist **inside a running Obsidian process** — not in t
 - **Obsidian Bases** — view rows are computed against Obsidian's metadata cache.
 - **Live-workspace / active-editor awareness** — which note is open and the cursor position only exist in the UI.
 
-For these we ship an **optional** [`obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) that runs inside Obsidian and exposes a localhost-only HTTP endpoint with bearer-token auth. The standalone MCP server discovers the plugin via a vault-scoped discovery file at `{VAULT}/.obsidian/plugins/obsidian-brain-companion/discovery.json` and proxies the plugin-dependent tools through it. Currently: `active_note` (server v1.2.0 / plugin v0.1.0+) and `dataview_query` (server v1.3.0 / plugin v0.2.0+). `base_query` is planned for v1.4.0. When the plugin is absent or Obsidian isn't running, those tools surface an actionable install message; every other tool keeps working.
+For these we ship an **optional** [`obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) that runs inside Obsidian and exposes a localhost-only HTTP endpoint with bearer-token auth. The standalone MCP server discovers the plugin via a vault-scoped discovery file at `{VAULT}/.obsidian/plugins/obsidian-brain-companion/discovery.json` and proxies the plugin-dependent tools through it. Currently: `active_note` (server v1.2.0 / plugin v0.1.0+), `dataview_query` (server v1.3.0 / plugin v0.2.0+, **plus the third-party Dataview community plugin by blacksmithgu installed and enabled** in the same vault), and `base_query` (server v1.4.0 / plugin v1.4.0+, plus Obsidian ≥ 1.10.0 with the core Bases plugin enabled). When the plugin is absent or Obsidian isn't running, those tools surface an actionable install message; every other tool keeps working.
 
-**Capability gating** (since v1.3.0): the plugin writes `capabilities: string[]` into `discovery.json` — v0.2.0 emits `["status", "active", "dataview"]`. `ObsidianClient.has(capability)` in `src/obsidian/client.ts` reads that list; capability-gated tools check before making the HTTP call and return a clean "upgrade to plugin vX.Y.Z" error when the installed plugin is too old, instead of opaque 404s from missing routes. Plugins without the `capabilities` field (v0.1.x) are treated as `["status", "active"]` for backward compatibility.
+**Capability gating** (since v1.3.0): the plugin writes `capabilities: string[]` into `discovery.json` — v1.4.0+ emits `["status", "active", "dataview", "base"]`. `ObsidianClient.has(capability)` in `src/obsidian/client.ts` reads that list; capability-gated tools check before making the HTTP call and return a clean "upgrade to plugin vX.Y.Z" error when the installed plugin is too old, instead of opaque 404s from missing routes. Plugins without the `capabilities` field (v0.1.x) are treated as `["status", "active"]` for backward compatibility.
 
 Why this shape (a plugin that's just a data provider, not an MCP server):
 
 - **Keeps the MCP surface stdio-only.** Putting the MCP server inside the plugin, as [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obsidian-mcp-plugin) does, forces HTTP transport, which is what trips the rmcp SSE bug in Jan. Our stdio server sidesteps that entirely (see Appendix).
-- **Keeps the "works without Obsidian" promise.** The standalone server and its 13 non-plugin-dependent tools are fully functional with Obsidian closed.
+- **Keeps the "works without Obsidian" promise.** The standalone server and its 13 non-plugin-dependent tools (of 16 total) are fully functional with Obsidian closed.
 - **Plugin is a minimal data provider, not a full MCP implementation.** A few HTTP routes, ~5 KB of bundled code. The tool surface, auth, schema validation, and MCP protocol handling all live in the Node server where they already work.
 
 **Cloud embeddings** (OpenAI / Voyage / Cohere) are the one item in the "doesn't do" table that won't land via the plugin. That's a deliberate stance — fully local, zero egress, works offline. The `Embedder` interface is forkable if anyone wants cloud embeddings as a personal variant.

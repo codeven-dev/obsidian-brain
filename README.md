@@ -8,7 +8,7 @@
 A standalone Node MCP server that gives Claude (and any other MCP client) **semantic search + knowledge graph + vault editing** over an Obsidian vault. Runs as one local stdio process — no plugin, no HTTP bridge, no API key, nothing hosted. Your vault content never leaves your machine.
 
 > 📖 **Full docs → [sweir1.github.io/obsidian-brain](https://sweir1.github.io/obsidian-brain/)**
-> **Companion plugin** → [`sweir1/obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) (optional — unlocks `active_note` + `dataview_query`)
+> **Companion plugin** → [`sweir1/obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) (optional — unlocks `active_note`, `dataview_query`, `base_query`)
 
 **Contents** — [Quick start](#quick-start) · [Tool reference](#tool-reference) · [How it works](#how-it-works) · [Install in your MCP client](#install-in-your-mcp-client) · [Migrating from the aaronsb plugin](#coming-from-the-obsidian-mcp-plugin) · [Scheduled re-indexing](#scheduled-re-indexing) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting) · [Development](#development--install-from-source) · [Live updates](#live-updates) · [What it doesn't do](#what-it-does-not-do-yet)
 
@@ -47,43 +47,46 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
 
 ## Tool reference
 
-15 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction. Tools marked *requires companion plugin* only work when the [companion Obsidian plugin](docs/plugin.md) is installed and Obsidian is running.
+16 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction. Tools marked *requires companion plugin* only work when the [companion Obsidian plugin](docs/plugin.md) is installed and Obsidian is running.
 
 > [!TIP]
-> Since v1.2.2, `edit_note` with `mode: 'patch_heading'` supports `scope: 'body'` to stop at the first blank line (prevents the default `'section'` scope from consuming content below a trailing heading). `patch_frontmatter` accepts `valueJson` for clients like claude.ai that stringify tool-call params — pass `valueJson: 'null'` to clear a key, `valueJson: 'true'` for a real boolean, `valueJson: '42'` for a number. `create_note` respects `frontmatter: { title: null }` as opt-out from title auto-injection. `list_notes` gains `includeStubs: false` to filter out unresolved wiki-link targets.
+> **v1.4.0** made semantic search chunk-level and introduced **hybrid retrieval as the default** for `search` — RRF-fused semantic + full-text ranks, no `mode` param required. `search` also accepts `unique: 'chunks'` to see raw chunk-level rows with `chunkHeading`/`chunkStartLine`/`chunkExcerpt`. Embedding is configurable via `EMBEDDING_MODEL` and auto-reindexes on model change — see [Embedding model](#embedding-model).
 
 > [!TIP]
-> **v1.3.0 adds `dataview_query`** (requires companion plugin v0.2.0+ and the Dataview community plugin enabled). Returns a normalized `{kind, ...}` discriminated union — Dataview's `Link`/`DateTime`/`DataArray`/`Duration` values are flattened to JSON so tools consuming the output don't need Dataview runtime types. `timeoutMs` only bounds the HTTP wait; Dataview itself has no cancellation API, so prefer `LIMIT N` for open-ended queries. Plugin ≥ 0.2.0 also writes a `capabilities` list in its discovery file so future tools can fail fast with an upgrade prompt when connected to an older plugin.
+> **v1.5.0** adds an Ollama embedding provider (`EMBEDDING_PROVIDER=ollama`, see [Alternative provider: Ollama](#alternative-provider-ollama)), opt-in `next_actions` envelope hints on `search` / `read_note` / `find_connections` / `delete_note` (`{data, context: {next_actions}}` — clients that ignore `context` keep working), inbound wiki-link rewriting on `move_note` (returns `linksRewritten: {files, occurrences}`), explicit `headingIndex` disambiguation on `edit_note`'s `patch_heading`, `truncated` signal on `read_note` full-mode, `includeStubs` on `detect_themes` + `rank_notes`, and graph-analytics credibility guards (PageRank excludes nodes with `< 2` incoming links by default; low-modularity `detect_themes` result warns; `bridging` scores normalized 0–1).
+
+> [!TIP]
+> `dataview_query` (v1.3.0) requires the **third-party Dataview community plugin** by [blacksmithgu](https://github.com/blacksmithgu/obsidian-dataview) enabled in the same vault. Install from Obsidian → Settings → Community plugins → Browse → search "Dataview" → Install → Enable. `base_query` (v1.4.0) requires the **core** Obsidian Bases plugin (Settings → Core plugins → Bases). See [docs/plugin.md](docs/plugin.md) for both.
 
 ### Find stuff
 
-- **`search`** — Find notes by meaning (semantic) or by exact text (full-text).
+- **`search`** — Find notes by meaning + exact text. Default `mode: 'hybrid'` fuses chunk-level semantic and FTS5 full-text rankings via Reciprocal Rank Fusion; pass `mode: 'semantic'` or `mode: 'fulltext'` to force one. Default `unique: 'notes'` returns one row per note (best chunk wins); set `unique: 'chunks'` for chunk-level rows with `chunkHeading`/`chunkStartLine`/`chunkExcerpt`. v1.5.0 wraps the response as `{data, context}` with a `context.next_actions` hint for the top hit / zero-result retry / connections follow-up — clients that ignore `context` keep working.
   > *"Use `search` to find notes semantically about supply-chain tax."*
 - **`list_notes`** — List notes, optionally filtered by directory or tag.
   > *"Use `list_notes` to list every note under `Projects/` tagged `#active`."*
-- **`read_note`** — Read a note's metadata (and optionally full body). Fuzzy-matches filenames.
-  > *"Use `read_note` to open the note called 'Q4 planning' and include the full content."*
+- **`read_note`** — Read a note's metadata (and optionally full body). Fuzzy-matches filenames. In `mode: 'full'`, returns `truncated: true` when the body exceeded `maxContentLength` (default 2000) and was sliced. v1.5.0 wraps the response as `{data, context}` with `next_actions` hints — `create_note` for unresolved `[[links]]`, `find_connections` for outgoing neighbours.
+  > *"Use `read_note` to open the note called 'Q4 planning' with `mode: 'full'`."*
 
 ### Understand the graph
 
-- **`find_connections`** — N-hop link neighborhood around a note. Optional full subgraph.
+- **`find_connections`** — N-hop link neighborhood around a note. Optional full subgraph. v1.5.0 wraps the response as `{data, context}` with `context.next_actions` suggesting `detect_themes` on large neighbourhoods and `find_path_between` to the furthest neighbour.
   > *"Use `find_connections` to show everything within 2 hops of `Epistemology.md`."*
 - **`find_path_between`** — Shortest link chain(s) between two notes. Optional shared-neighbors.
   > *"Use `find_path_between` to find how `Bayesian updating` connects to `Kelly criterion`."*
-- **`detect_themes`** — Auto-detected topic clusters via Louvain community detection.
+- **`detect_themes`** — Auto-detected topic clusters via Louvain community detection. Since v1.4.0, each cluster carries `staleMembersFiltered` (cached ids that no longer exist and were dropped on read). v1.5.0 adds `includeStubs: false` to exclude unresolved wiki-link targets, and wraps the response as `{clusters, warning, modularity}` if the graph's overall Louvain modularity is `< 0.3` — i.e. "not clearly separable."
   > *"Use `detect_themes` to surface the main themes across my vault."*
-- **`rank_notes`** — Top notes by influence (PageRank) or bridging (betweenness centrality).
-  > *"Use `rank_notes` to list the top 10 most-linked-to notes by PageRank."*
+- **`rank_notes`** — Top notes by `influence` (PageRank over backlinks), `bridging` (betweenness centrality, normalized 0–1 so scores compare across vaults since v1.5.0), or `both`. v1.5.0 defaults to `minIncomingLinks: 2` on `influence` to filter orphan noise — pass `minIncomingLinks: 0` to opt out. Pass `includeStubs: false` to exclude unresolved wiki-link targets.
+  > *"Use `rank_notes` with `metric: 'influence'` to list the top 10 most-linked-to notes."*
 
 ### Write stuff
 
 - **`create_note`** — Create a new note with frontmatter and auto-index it.
   > *"Use `create_note` to create `Meetings/2026-04-21 standup.md` with tags `[meeting, standup]`."*
-- **`edit_note`** — Modify an existing note: append / prepend / window / patch-heading / patch-frontmatter / at-line.
+- **`edit_note`** — Modify an existing note. Six modes: `append`, `prepend`, `replace_window`, `patch_heading`, `patch_frontmatter`, `at_line`. Since v1.5.0, `patch_heading` throws `MultipleMatchesError` with per-occurrence line numbers when more than one heading matches; disambiguate with `headingIndex: N` (0-indexed appearance order).
   > *"Use `edit_note` to append a 'Follow-ups' section to today's standup note."*
 - **`link_notes`** — Add a wiki-link between two notes plus a "why this connects" context sentence.
   > *"Use `link_notes` to link `Bayesian updating` to `Kelly criterion` with a note about risk-adjusted bets."*
-- **`move_note`** — Rename or move a note; edges stay intact.
+- **`move_note`** — Rename or move a note. Since v1.5.0, inbound wiki-links (`[[old]]`, `[[old|alias]]`, `![[old]]`, `[[old#heading]]`, `[[old^block]]`) are rewritten in place across the vault; the response includes `linksRewritten: {files, occurrences}`.
   > *"Use `move_note` to move `Inbox/thought.md` into `Areas/Ideas/thought.md`."*
 - **`delete_note`** — Delete a note; requires `confirm: true`.
   > *"Use `delete_note` with `confirm: true` to delete `Inbox/obsolete.md`."*
@@ -92,12 +95,14 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
 
 - **`active_note`** — Returns the note currently open in Obsidian + cursor position + selection. Requires the [`obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) companion installed in your vault and Obsidian running.
   > *"Use `active_note` to see what note I'm editing right now."*
-- **`dataview_query`** *(v1.3.0)* — Run a Dataview DQL query. Returns a normalized discriminated union: `kind='table'` gives `{headers, rows}`, `'list'` gives `{values}`, `'task'` gives `{items: [...]}` with full STask fields, `'calendar'` gives `{events: [...]}`. All Dataview `Link`/`DateTime`/`DataArray`/`Duration` values are flattened to JSON. Requires companion plugin v0.2.0+ and the Dataview community plugin enabled in the vault. 30s default timeout — see [docs/plugin.md](docs/plugin.md#dataview) for the timeout caveat (Dataview has no cancellation API).
+- **`dataview_query`** *(v1.3.0)* — Run a Dataview DQL query. Returns a normalized discriminated union: `kind='table'` gives `{headers, rows}`, `'list'` gives `{values}`, `'task'` gives `{items: [...]}` with full STask fields, `'calendar'` gives `{events: [...]}`. All Dataview `Link`/`DateTime`/`DataArray`/`Duration` values are flattened to JSON. Requires companion plugin v0.2.0+ **and** the third-party [Dataview community plugin](https://github.com/blacksmithgu/obsidian-dataview) (by blacksmithgu) installed + enabled in the same vault — install via Obsidian → Settings → Community plugins → Browse → search "Dataview". 30s default timeout; Dataview has no cancellation API, so prefer `LIMIT N` for open-ended queries. Full details: [docs/plugin.md → Dataview](docs/plugin.md#dataview).
   > *"Use `dataview_query` to list every note tagged #book with its rating."*
+- **`base_query`** *(v1.4.0)* — Evaluate an Obsidian Bases `.base` file and return rows. Pass either `file` (vault-relative path to a `.base`) or `yaml` (inline source), plus `view` (the named view to execute). Returns `{view, rows, total, executedAt}`. Requires companion plugin v1.4.0+, Obsidian ≥ 1.10.0, and the **core** Bases plugin enabled (Settings → Core plugins → Bases). The v1.4.0 expression evaluator supports tree ops (and/or/not), comparisons (`==`, `!=`, `>`, `>=`, `<`, `<=`), `file.{name,path,folder,ext,size,mtime,ctime,tags}`, `file.hasTag(...)`, `file.inFolder(...)`, and frontmatter dot-access. Arithmetic, function calls, `formulas:`, `summaries:`, regex literals, and `this` are deferred to v1.4.1 / v1.4.2 / v1.4.3 patches. Full subset + error reference: [docs/plugin.md → Bases](docs/plugin.md#bases).
+  > *"Use `base_query` on `Bases/Books.base` with view `active-books` to list everything I'm currently reading."*
 
 ### Maintenance
 
-- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe. Since v1.2.2, passing `resolution` or detecting any deletion forces a fresh Louvain community pass (previously these could silently no-op).
+- **`reindex`** — Force a full re-index. You rarely need this — the watcher picks up file changes automatically; fall back to this if your vault lives somewhere FSEvents/inotify can't observe. Since v1.4.0 a bare `reindex({})` defaults `resolution: 1.0` and always re-runs Louvain community detection + orphan pruning (earlier versions could silently no-op when nothing had changed).
   > *"Use `reindex` to refresh the index after I bulk-edited files outside Claude."*
 
 ## How it works
@@ -117,7 +122,7 @@ flowchart LR
     Client <-->|"stdio JSON-RPC"| OB
 ```
 
-Retrieval and writes both go through the SQLite index: reads are microsecond-cheap, writes land on disk immediately and incrementally re-index the affected file. Embeddings use [Xenova's local port of all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) — 384 dims, ~22 MB, fully local, no API calls.
+Retrieval and writes both go through the SQLite index: reads are microsecond-cheap, writes land on disk immediately and incrementally re-index the affected file. Since v1.4.0, embeddings are **chunk-level** — each note is split on markdown headings (H1–H4) with paragraph / sentence fallback for oversized sections (code fences and `$$…$$` LaTeX blocks preserved intact) — and `search`'s default `hybrid` mode fuses chunk-level semantic rank and FTS5 BM25 rank via Reciprocal Rank Fusion. The default embedder is [Xenova's local port of all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2) (384 dims, ~22 MB, fully local, no API calls); since v1.5.0 an Ollama provider is available as `EMBEDDING_PROVIDER=ollama`. See [Embedding model](#embedding-model) + [Alternative provider: Ollama](#alternative-provider-ollama).
 
 > [!TIP]
 > Why stdio, why SQLite, why incremental mtime sync: see [docs/architecture.md](docs/architecture.md).
@@ -192,7 +197,7 @@ Fastest: **Cursor Settings → MCP → Add new MCP server**. Or edit `~/.cursor/
 }
 ```
 
-Reload Cursor; the server appears under Settings → MCP with its 15 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
+Reload Cursor; the server appears under Settings → MCP with its 16 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
 
 </details>
 
@@ -494,7 +499,7 @@ If you were using [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obs
 2. Disable the plugin in Obsidian (Settings → Community plugins → toggle off). Uninstall BRAT too if you don't beta-test other plugins.
 3. Quit Claude Desktop (⌘Q) and relaunch.
 
-You can uninstall the aaronsb plugin entirely. We're building equivalent Dataview + Bases support into our own optional [companion plugin](docs/plugin.md) — `active_note` (v1.2.0) and `dataview_query` (v1.3.0) are live; `base_query` arrives in v1.4.0. Inline Dataview `key:: value` fields are parsed into searchable frontmatter with or without the plugin.
+You can uninstall the aaronsb plugin entirely. We're building equivalent Dataview + Bases support into our own optional [companion plugin](docs/plugin.md) — `active_note` (v1.2.0), `dataview_query` (v1.3.0), and `base_query` (v1.4.0) are all live. Inline Dataview `key:: value` fields are parsed into searchable frontmatter with or without the plugin.
 
 ## Scheduled re-indexing
 
@@ -674,7 +679,7 @@ Deeper write-up: [docs/watching.md](docs/watching.md).
 
 Three kinds of data only exist inside a running Obsidian process: Dataview DQL results, Obsidian Bases rows, and active-editor state. To reach them we ship an **optional** Obsidian plugin at [`sweir1/obsidian-brain-plugin`](https://github.com/sweir1/obsidian-brain-plugin) that exposes a localhost-only HTTP endpoint the server connects to. Install it via BRAT with the repo ID `sweir1/obsidian-brain-plugin`.
 
-When the plugin is installed and Obsidian is open, `active_note` (v1.2.0) and `dataview_query` (v1.3.0) light up. `base_query` arrives in v1.4.0. Every other tool keeps working with or without the plugin.
+When the plugin is installed and Obsidian is open, `active_note` (v1.2.0), `dataview_query` (v1.3.0), and `base_query` (v1.4.0) light up. Every other tool keeps working with or without the plugin.
 
 Details, security model, troubleshooting: [`docs/plugin.md`](docs/plugin.md).
 
@@ -682,12 +687,12 @@ Details, security model, troubleshooting: [`docs/plugin.md`](docs/plugin.md).
 
 | Gap | Why | Workaround / future |
 |---|---|---|
-| **Dataview DQL queries** | DQL is evaluated inside Obsidian against Dataview's own in-memory index — we can't replicate that from outside. | **Shipped** in v1.3.0 as `dataview_query` via the [companion plugin](docs/plugin.md) (requires the Dataview community plugin enabled). Inline `key:: value` fields are still parsed into searchable frontmatter without any plugin. |
-| **Obsidian Bases** | Bases view rows are computed by Obsidian against its metadata cache. | Arrives in v1.4.0 via the [companion plugin](docs/plugin.md). |
+| **Dataview DQL queries** | DQL is evaluated inside Obsidian against Dataview's own in-memory index — we can't replicate that from outside. | **Shipped** in v1.3.0 as `dataview_query` via the [companion plugin](docs/plugin.md) (requires the third-party [Dataview community plugin](https://github.com/blacksmithgu/obsidian-dataview) by blacksmithgu, installed + enabled in the same vault). Inline `key:: value` fields are still parsed into searchable frontmatter without any plugin. |
+| **Obsidian Bases** | Bases view rows are computed by Obsidian against its metadata cache. | **Shipped** in v1.4.0 as `base_query` via the [companion plugin](docs/plugin.md) — Path B (own YAML + whitelisted expression evaluator, since Obsidian has no public headless-query API for Bases yet). v1.4.0 covers tree ops + comparisons + file props + hasTag/inFolder + frontmatter; arithmetic / formulas / summaries / functions ship in v1.4.1 / v1.4.2 / v1.4.3 patches. |
 | **Live-workspace / active-editor awareness** | Requires a signal from inside Obsidian. | **Shipped** in v1.2.0 as `active_note` via the [companion plugin](docs/plugin.md). |
 | **Cloud embeddings (OpenAI / Voyage / Cohere)** | Deliberate: fully local, zero API calls, zero egress, works offline. | If you want cloud embeddings, the `Embedder` class is easy to fork — but it's not a config knob. |
 
-Full forward-looking plan: [`docs/roadmap.md`](docs/roadmap.md) — v1.4.0 Bases, v1.5.0 deferred UX bundle, plugin v0.3.0 pairing, and explicit "not planned" stances.
+Full forward-looking plan: [`docs/roadmap.md`](docs/roadmap.md) — v1.4.x Bases subset rollout (arithmetic / formulas / summaries), v1.6.0 agentic writes safety bundle (`dryRun`, bulk `edit_note`, fuzzy window edits), v1.7.0 block-ref editing + FTS5 tuning, v2.0 daemon mode + community registry submission, and explicit "not planned" stances.
 
 ## Credits
 

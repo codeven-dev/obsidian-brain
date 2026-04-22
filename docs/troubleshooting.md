@@ -244,19 +244,27 @@ Default locations: `$HOME/.local/share/obsidian-brain` on Linux, `$HOME/Library/
 1. The embedding model's notion of semantic similarity does not match what you actually want (this happens often with short or jargon-heavy queries).
 2. Your vault is mostly empty or stub notes, so there is not enough signal for embedding-based retrieval to work well.
 
-**Fix.** Try a full-text search instead:
+**Fix.** Since v1.4.0, the default `search` mode is already `hybrid` — Reciprocal-Rank-Fused semantic + full-text — so both signals combine out of the box. If the hybrid result still misses literal-token matches you know are in your vault, force FTS:
 
 ```json
 { "mode": "fulltext" }
 ```
 
-passed via `search`. If you want better semantic retrieval and can tolerate slower indexing, switch to a larger model:
+passed via `search`. For pure concept queries, force semantic:
 
-```bash
-VAULT_PATH=/path/to/vault EMBEDDING_MODEL=Xenova/all-mpnet-base-v2 obsidian-brain index --drop
+```json
+{ "mode": "semantic" }
 ```
 
-`--drop` is required when the new model's output dim differs from the stored index (e.g. all-mpnet-base-v2 is 768-dim vs all-MiniLM's 384). `all-mpnet-base-v2` is noticeably higher quality but also noticeably slower and larger on disk.
+If you want better semantic retrieval overall, switch to a larger model — since v1.4.0 the server stores the active embedding model/dim/provider in `index_metadata` and **auto-reindexes from scratch the next time it boots under a new identifier**. No `--drop` needed:
+
+```bash
+EMBEDDING_MODEL=Xenova/bge-base-en-v1.5 obsidian-brain server
+# or for the Ollama path (v1.5.0+):
+EMBEDDING_PROVIDER=ollama EMBEDDING_MODEL=nomic-embed-text obsidian-brain server
+```
+
+On the next startup the server logs a single reason line ("Embedding model changed: X(d) → Y(d'). Auto-reindexing.") and rebuilds per-chunk embeddings. See [Architecture → Why local embeddings](./architecture.md#why-local-embeddings-xenova-all-minilm-l6-v2) for the bootstrap flow.
 
 ---
 
@@ -323,15 +331,19 @@ If that line is missing, check `OBSIDIAN_BRAIN_NO_WATCH`. If it's present, the i
 
 **Summary.** Server aborts with an error about embedding dimensions not matching the stored index.
 
-**Cause.** You changed `EMBEDDING_MODEL` to a model whose output dimensionality is different from the model used when the index was originally built (e.g. moved from `all-MiniLM-L6-v2` at 384 dims to `all-mpnet-base-v2` at 768 dims). The stored vectors and the new model are incompatible.
+**Cause.** You're running a **pre-v1.4.0 server** and changed `EMBEDDING_MODEL` to a model whose output dimensionality differs from the stored index (e.g. 384 → 768). The old server couldn't auto-migrate across dim changes.
 
-**Fix.** Rebuild the index from scratch with the new model:
+**Fix.** Upgrade to v1.4.0 or later — `src/pipeline/bootstrap.ts` records the active model/dim/provider in the `index_metadata` table and, when any of those differs on startup, automatically drops the vec tables + sync mtimes and rebuilds per-chunk embeddings against the new model on next boot. No `--drop` flag required; just set the new env var and restart:
 
 ```bash
-VAULT_PATH=/path/to/vault EMBEDDING_MODEL=Xenova/all-mpnet-base-v2 obsidian-brain index --drop
+EMBEDDING_MODEL=Xenova/bge-base-en-v1.5 obsidian-brain server
 ```
 
-`--drop` wipes stored embeddings and per-file sync state, then reindexes the vault fresh. The vault content itself is untouched.
+If you are stuck on an older release and cannot upgrade, wipe `$DATA_DIR` and let the fresh index build under the new model (vault content is untouched):
+
+```bash
+rm -rf "$DATA_DIR"
+```
 
 ---
 

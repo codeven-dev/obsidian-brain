@@ -76,4 +76,4 @@ Point launchd (macOS) or systemd (Linux) at it and let it run continuously. Temp
 
 If edits aren't landing in the index, see [troubleshooting.md → Watcher not firing](./troubleshooting.md#watcher-not-firing). Most common causes: vault on a network drive where FSEvents/inotify don't fire, or `OBSIDIAN_BRAIN_NO_WATCH=1` inherited from a shell or plist.
 
-For the rarer case of an `EMBEDDING_MODEL` swap that leaves stale-dim vectors in the index, see [troubleshooting.md → Embedding dimension mismatch](./troubleshooting.md#embedding-dimension-mismatch-error-on-startup). Fix is `obsidian-brain index --drop`.
+For an `EMBEDDING_MODEL` swap, v1.4.0+ auto-reindexes on next boot when it detects the model (or dim, or provider) changed — no `--drop` needed. See [troubleshooting.md → Embedding dimension mismatch](./troubleshooting.md#embedding-dimension-mismatch-error-on-startup) for the pre-v1.4.0 migration path.
