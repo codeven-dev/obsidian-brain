@@ -1,4 +1,9 @@
-# Troubleshooting obsidian-brain
+---
+title: Troubleshooting
+description: Known issues, common gotchas, and the fix for each. Covers install, startup, indexing, watcher, and tool-call failure modes.
+---
+
+# Troubleshooting
 
 This guide covers errors and edge cases beyond the short Troubleshooting section in the README. Entries are grouped by symptom. If you only have a moment, scan the headers below and jump to the one that matches what you are seeing.
 
@@ -29,6 +34,8 @@ For architecture context (how the indexer, SQLite cache, and MCP server fit toge
 - [dataview_query returns "Dataview plugin not installed"](#dataview_query-returns-dataview-plugin-not-installed)
 - [dataview_query requires companion plugin v0.2.0+](#dataview_query-requires-companion-plugin-v020)
 - [dataview_query timed out but the query still runs in Obsidian](#dataview_query-timed-out-but-the-query-still-runs-in-obsidian)
+- [`apply_edit_preview` fails with "file has changed since preview"](#apply_edit_preview-fails-with-file-has-changed-since-preview)
+- [`edit_note({ mode: "replace_window" })` returns `NoMatch`](#edit_note-mode-replace_window-returns-nomatch)
 - [Still stuck?](#still-stuck)
 
 ---
@@ -115,7 +122,7 @@ Then re-run the rebuild command above. To avoid this happening again, prefer the
 
 **Summary.** The first invocation of any tool takes a minute or more before returning, or the CLI appears frozen.
 
-**Cause.** On first use, the default embedding model (the v1.5.2 default `bge-small-en-v1.5` at ~34 MB; other presets range from 17 MB `fastest` to 118 MB `multilingual`) is downloaded into `DATA_DIR/models/`. No progress is printed to stdout because stdout is the MCP transport.
+**Cause.** On first use, the default embedding model (`bge-small-en-v1.5` at ~34 MB; other presets range from 17 MB `fastest` to 118 MB `multilingual`) is downloaded into `DATA_DIR/models/`. No progress is printed to stdout because stdout is the MCP transport.
 
 **Fix.** Wait. Subsequent runs reuse the cached model and start in well under a second. If the download actually failed (network dropped, disk full, etc.) delete the partial download and retry:
 
@@ -475,6 +482,34 @@ After the plugin restarts, its `discovery.json` will contain `"capabilities": ["
 3. **Raise `timeoutMs`** only if the query is genuinely expensive and you're willing to wait; retrying with a larger budget doesn't speed up the current in-flight query since it's still running.
 
 The companion plugin serialises `/dataview` requests — a second call queues behind the first, so retries don't stack CPU load. Concurrency is one in-flight query at a time per plugin.
+
+---
+
+## `apply_edit_preview` fails with "file has changed since preview"
+
+You called `edit_note({ dryRun: true })`, got a `previewId`, but between then and `apply_edit_preview(previewId)` the target file was modified (either by you, Obsidian's autosave, or another tool call). The preview's cached `originalContent` no longer matches what's on disk, and the tool refuses to apply rather than clobber intervening changes.
+
+**Fix:** regenerate the preview. Re-call `edit_note({ dryRun: true, ...same args... })` — you'll get a fresh `previewId` computed against the current file content. Then `apply_edit_preview(newPreviewId)`.
+
+Preview TTL is 5 minutes. If you wait longer than that between dry-run and apply, you'll see `"Preview <previewId> not found or expired"` instead — same fix.
+
+---
+
+## `edit_note({ mode: "replace_window" })` returns `NoMatch`
+
+Your `search` string didn't match anything in the target file. Three common causes: (a) the file content changed since you read it, (b) the search string has subtle whitespace / punctuation drift, (c) you're editing a note that was re-generated and the anchor text no longer exists.
+
+**Quick fix — retry with `from_buffer`:**
+
+```json
+edit_note({ "name": "foo.md", "from_buffer": true })
+```
+
+When `replace_window` fails with `NoMatch`, obsidian-brain buffers the proposed `content` + `search` under the file path. A follow-up call with `from_buffer: true` retrieves the buffered content and retries with `fuzzy: true, fuzzyThreshold: 0.5` — tolerant enough to match through whitespace drift and minor wording changes.
+
+**Manual alternative:** re-issue the original call with `fuzzy: true` + a lower `fuzzyThreshold` (e.g. `0.5`) yourself, tightening the `search` string to match what's actually in the file.
+
+Buffer TTL is 30 minutes; per-entry content cap is 512 KB. If your `replace_window` content is larger than that, the buffer refuses to accept it — the tool response will include a `reason` field explaining why.
 
 ---
 

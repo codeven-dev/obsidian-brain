@@ -1,3 +1,10 @@
+/* ─ theme.css ─────────────────────────────────────────────────────────────
+   Site-wide colour palette + base typography overrides.
+   Edit here when: you want to change the global accent colour, body font,
+   code font, or Material's default palette tokens. Anything that applies
+   across every page lives here.
+   ─────────────────────────────────────────────────────────────────────── */
+
 /*
  * obsidian-brain · theme tokens
  *

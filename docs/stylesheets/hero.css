@@ -1,3 +1,11 @@
+/* ─ hero.css ──────────────────────────────────────────────────────────────
+   Home-page hero section only. Owns .ob-hero, .ob-hero__inner, .ob-hero__copy,
+   .ob-hero__title, .ob-hero__lede, .ob-hero__ctas, .ob-hero__shell, .ob-graph,
+   .ob-hero__margin, and related pseudo-elements.
+   Edit here when: you want to change the landing-page hero layout, typography,
+   CTA styles, or the SVG topographic graphic's positioning / colouring.
+   ─────────────────────────────────────────────────────────────────────── */
+
 /*
  * obsidian-brain · hero section (landing page only)
  *

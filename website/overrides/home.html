@@ -120,7 +120,7 @@
     <header class="ob-features__header">
       <p class="ob-features__eyebrow">What it does</p>
       <h2 class="ob-features__title">
-        Six capabilities,<br>one <em>local</em> process.
+        One <em>local</em> process.<br>All the leverage.
       </h2>
     </header>
 
@@ -141,7 +141,7 @@
           Vector similarity over locally-embedded chunks, unified with SQLite FTS5
           full-text. Ask in natural language; rank by meaning, not just keywords.
         </p>
-        <a class="ob-feature__link" href="{{ 'tools/#search' | url }}">search tool</a>
+        <a class="ob-feature__link" href="{{ 'tools/' | url }}">search tool</a>
       </article>
 
       <article class="ob-feature">
@@ -157,10 +157,10 @@
         <p class="ob-feature__eyebrow">Map</p>
         <h3 class="ob-feature__title">Knowledge graph</h3>
         <p class="ob-feature__body">
-          Connection neighbourhoods, shortest paths between notes, Louvain-clustered
-          themes, and PageRank over your backlink graph.
+          Connection neighbourhoods, shortest paths between notes, Louvain-clustered themes,
+          PageRank over backlinks, and betweenness centrality for bridging notes.
         </p>
-        <a class="ob-feature__link" href="{{ 'tools/#find_connections' | url }}">graph tools</a>
+        <a class="ob-feature__link" href="{{ 'tools/' | url }}">graph tools</a>
       </article>
 
       <article class="ob-feature">
@@ -173,10 +173,11 @@
         <p class="ob-feature__eyebrow">Write</p>
         <h3 class="ob-feature__title">Vault editing</h3>
         <p class="ob-feature__body">
-          Create, append, patch-heading, patch-frontmatter, rename, link, delete.
-          Every write re-indexes the affected file in milliseconds.
+          Atomic edits with dry-run previews, bulk batches, and fuzzy matching. Agents
+          preview their diffs, commit via a preview-ID, and recover from failed matches —
+          safely, with every write incrementally re-indexed in milliseconds.
         </p>
-        <a class="ob-feature__link" href="{{ 'tools/#create_note' | url }}">write tools</a>
+        <a class="ob-feature__link" href="{{ 'tools/' | url }}">write tools</a>
       </article>
 
       <article class="ob-feature">
@@ -190,8 +191,9 @@
         <p class="ob-feature__eyebrow">Extend</p>
         <h3 class="ob-feature__title">Companion plugin</h3>
         <p class="ob-feature__body">
-          An optional Obsidian plugin exposes live editor state and Dataview DQL
-          query results — the two things the filesystem alone can't tell you.
+          An optional Obsidian plugin unlocks the three tools that need a running
+          Obsidian process: active_note (current editor state), dataview_query (DQL),
+          and base_query (Obsidian Bases rows).
         </p>
         <a class="ob-feature__link" href="{{ 'plugin/' | url }}">plugin docs</a>
       </article>

@@ -1,3 +1,8 @@
+---
+title: Architecture
+description: Why obsidian-brain is stdio-only, SQLite-backed, chunk-level — and how all the pieces fit together.
+---
+
 # obsidian-brain architecture
 
 This document explains *why* obsidian-brain is built the way it is. The [Quick start](getting-started.md) and [Tool reference](tools.md) cover *what* it does; this covers the decisions behind the structure, what each one trades away, and when you might want to revisit it.
@@ -8,7 +13,7 @@ This document explains *why* obsidian-brain is built the way it is. The [Quick s
 flowchart LR
     CLI["cli/<br/>(user entry)"] --> Server["server.ts"]
     CLI --> Pipeline["pipeline/"]
-    Server --> Tools["tools/<br/>(16 handlers)"]
+    Server --> Tools["tools/<br/>(17 handlers)"]
     Tools --> Pipeline
     Tools --> Search["search/"]
     Tools --> Graph["graph/"]
@@ -78,6 +83,10 @@ Why one file for all of it:
 - **Vault-relative path is the universal join key.** Every row everywhere uses the relative path (e.g. `Areas/Ideas/thought.md`) as its ID. Nodes, edges, embeddings, and sync all join on it. See `src/store/nodes.ts`, `src/store/edges.ts`, `src/store/embeddings.ts`.
 - **better-sqlite3 is synchronous and fast.** For a single-vault, single-user workload there is no concurrent writer, so we skip connection pooling and async ceremony entirely. `src/store/db.ts:25` sets `journal_mode = WAL` for safe reads during writes and that is the whole concurrency story.
 
+**Stub-lifecycle helpers (v1.5.8).** `src/store/nodes.ts` ships `pruneOrphanStubs`, `pruneAllOrphanStubs`, and `migrateStubToReal`. `move_note` and `delete_note` call these to clean up zero-inbound stubs left behind when a note is renamed or deleted; `create_note` repoints inbound edges from a matching stub to the new real note. `src/pipeline/indexer.ts` runs `resolveForwardStubs` + `pruneAllOrphanStubs` at the end of every `index()` call as a backstop.
+
+**FTS5 hyphen-safe queries (v1.5.8).** `src/store/fts5-escape.ts` phrase-quotes user queries containing characters FTS5 treats as operators (`-`, `:`, `(`, `)`, `*`, etc.) so queries like `foo-bar-baz` don't crash. Pure-alphanumeric queries pass through unchanged, preserving `AND` / `OR` / `NEAR` for power users.
+
 Tradeoff: sqlite-vec does a full scan for kNN. This is fine at the vault sizes we target (50k notes: subsecond on commodity hardware). Past roughly 500k notes you'd want an ANN index and this decision would need re-evaluation.
 
 ## Why local embeddings
@@ -90,7 +99,7 @@ Why not an API like OpenAI's `text-embedding-3-small`:
 
 - **Zero egress.** Vault content never leaves the machine. For people whose notes include journal entries, client names, medical notes, or anything else they'd rather not mail to an LLM vendor, this is the whole game.
 - **No API key, no quota, no billing.** Important for a tool that re-embeds on every file save without anyone thinking about it.
-- **~34 MB one-time model download** for the v1.5.2 default `bge-small-en-v1.5` (previous default `all-MiniLM-L6-v2` was ~22 MB), then tens of ms per note on CPU. Fast enough that the first full index of a 10k-note vault completes in minutes and incremental re-indexing is imperceptible.
+- **~34 MB one-time model download** for the default `bge-small-en-v1.5`, then tens of ms per note on CPU. Fast enough that the first full index of a 10k-note vault completes in minutes and incremental re-indexing is imperceptible.
 
 Tradeoff: quality is measurably below modern API embeddings on hard semantic-similarity benchmarks. Since v1.4.0 the embedder is pluggable behind an `Embedder` interface (`src/embeddings/types.ts`). `src/embeddings/factory.ts` selects the backend on `EMBEDDING_PROVIDER` (`transformers` default; `ollama` alternative since v1.5.0); each backend reads `EMBEDDING_MODEL` to pick the specific checkpoint. The `index_metadata` table stores the active `embedding_model` + `embedding_dim` + `embedding_provider`; on startup `src/pipeline/bootstrap.ts` compares them against the current embedder's `modelIdentifier()`/`dimensions()` and auto-clears the chunk + vec tables if they've changed, so switching models is safe — **no manual `--drop` required**. The Ollama backend (`src/embeddings/ollama.ts`) also injects task-type prefixes automatically for the asymmetric embedding models that need them (`nomic-embed-text` gets `search_query: ` / `search_document: `; `qwen*` gets `Query: ` on the query side; `mxbai-embed-large` / `mixedbread*` get `Represent this sentence for searching relevant passages: ` on queries).
 
@@ -119,9 +128,17 @@ Flow in one line: Obsidian saves file → chokidar emits `change` → 3 s deboun
 
 When to disable (`OBSIDIAN_BRAIN_NO_WATCH=1`): vault on SMB/NFS/iCloud where FSEvents/inotify don't fire reliably; shared-tenancy machines where you'd rather pay CPU on a fixed schedule than at edit time; or you already run a dedicated `obsidian-brain index` job and don't want two sources of writes.
 
+**Write-safety infrastructure (v1.6.0).** Three new tool modules support the `dryRun` / `apply_edit_preview` / `edits[]` / `from_buffer` flow:
+
+- `src/tools/preview-store.ts` — in-memory `Map<previewId, PendingEdit>` with 5-minute TTL and 50-entry cap. Process-global (stdio MCP is single-client per process).
+- `src/tools/apply-edit-preview.ts` — the 17th MCP tool. Reads the cached preview, guards against file-changed-since-preview, writes via temp+rename, reindexes.
+- `src/tools/edit-buffer.ts` — per-path buffer (30-min TTL, 20-entry cap, 512 KB per entry) of last-failed `replace_window` content for `from_buffer: true` retries.
+- `src/vault/editor.ts` exports `applyEdit` + `bulkEditNote`; the latter chains edit modes in memory and writes atomically at the end.
+- New runtime dependency: `diff@^8` (kpdecker/jsdiff) for unified-diff generation.
+
 ## Why modular file layout
 
-Most modules under `src/` stay under 200 lines; larger files reflect algorithm depth or SQL/type verbosity, not mixed concerns. The directory layout is:
+The directory layout is:
 
 - `src/server.ts` — MCP server bootstrap. Instantiates `McpServer`, wires `StdioServerTransport`, registers every tool, and starts the live watcher.
 - `src/config.ts` / `src/context.ts` — env parsing and the shared `ServerContext` object (DB handle, embedder, vault path, pipeline, writer, search) passed to every tool.
@@ -156,7 +173,7 @@ For these we ship an **optional** [`obsidian-brain-plugin`](https://github.com/s
 Why this shape (a plugin that's just a data provider, not an MCP server):
 
 - **Keeps the MCP surface stdio-only.** Putting the MCP server inside the plugin, as [`aaronsb/obsidian-mcp-plugin`](https://github.com/aaronsb/obsidian-mcp-plugin) does, forces HTTP transport, which is what trips the rmcp SSE bug in Jan. Our stdio server sidesteps that entirely (see Appendix).
-- **Keeps the "works without Obsidian" promise.** The standalone server and its 13 non-plugin-dependent tools (of 16 total) are fully functional with Obsidian closed.
+- **Keeps the "works without Obsidian" promise.** The standalone server and its 14 non-plugin-dependent tools (of 17 total) are fully functional with Obsidian closed.
 - **Plugin is a minimal data provider, not a full MCP implementation.** A few HTTP routes, ~5 KB of bundled code. The tool surface, auth, schema validation, and MCP protocol handling all live in the Node server where they already work.
 
 **Cloud embeddings** (OpenAI / Voyage / Cohere) are the one item in the "doesn't do" table that won't land via the plugin. That's a deliberate stance — fully local, zero egress, works offline. The `Embedder` interface is forkable if anyone wants cloud embeddings as a personal variant.

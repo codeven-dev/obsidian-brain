@@ -1,4 +1,11 @@
-# macOS LaunchAgent setup
+---
+title: Scheduled indexing (macOS)
+description: Run obsidian-brain as a macOS LaunchAgent — either the live watcher or a timer-driven reindex.
+---
+
+# Scheduled indexing (macOS)
+
+Two approaches for keeping the index fresh on macOS outside of an active MCP client session: a persistent `watch` daemon that mirrors Obsidian edits in real time, or a timer-driven `index` job that runs every 30 minutes. Both use launchd LaunchAgents — no root required.
 
 ## Recommended: run the watcher instead
 

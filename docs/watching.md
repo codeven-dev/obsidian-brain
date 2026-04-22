@@ -1,6 +1,11 @@
-# Live watching
+---
+title: Live updates
+description: How obsidian-brain's chokidar watcher reindexes the vault in real time. Debounces, gotchas, and knobs.
+---
 
-Deep-dive on the watcher that keeps obsidian-brain's index in sync with vault edits. Architectural placement is in [architecture.md](./architecture.md#live-sync).
+# Live updates
+
+obsidian-brain runs a [chokidar](https://github.com/paulmillr/chokidar) watcher inside the `server` process, reindexing any `.md` file within seconds of it being saved. This page covers how the watcher works, the two debounce stages, Obsidian's autosave layering, tuning knobs, and the standalone `watch` daemon for headless setups. Architectural placement is in [architecture.md](./architecture.md#live-sync).
 
 ## Why it's on by default in `server`
 

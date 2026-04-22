@@ -1,3 +1,11 @@
+/* ─ features.css ──────────────────────────────────────────────────────────
+   Home-page feature grid only. Owns .ob-features, .ob-features__header,
+   .ob-features__title, .ob-features__grid, .ob-feature, .ob-feature__icon,
+   .ob-feature__title, .ob-feature__body, .ob-feature__link, and breakpoints.
+   Edit here when: you want to change the feature-tile layout, icon styling,
+   grid spacing, or the h2 above the grid.
+   ─────────────────────────────────────────────────────────────────────── */
+
 /*
  * obsidian-brain · feature grid (landing page only)
  *

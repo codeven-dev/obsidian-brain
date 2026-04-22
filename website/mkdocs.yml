@@ -124,17 +124,31 @@ extra:
 
 nav:
   - Home: index.md
+
   - Getting started:
       - Quick start: getting-started.md
       - Install in your MCP client: install-clients.md
-  - Tool reference: tools.md
+      - Configuration: configuration.md
+      - Embedding model: embeddings.md
+
+  - Tools: tools.md
+
   - How it works:
       - Architecture: architecture.md
       - Live updates: watching.md
+
   - Companion plugin: plugin.md
-  - Advanced:
-      - Troubleshooting: troubleshooting.md
+
+  - Running in production:
       - Scheduled indexing (macOS): launchd.md
       - Scheduled indexing (Linux): systemd.md
+      - Troubleshooting: troubleshooting.md
+
+  - Using other clients:
       - Jan integration: jan.md
-  - Roadmap: roadmap.md
+      - Migrating from aaronsb plugin: migration-aaronsb.md
+
+  - Project:
+      - Changelog: CHANGELOG.md
+      - Roadmap: roadmap.md
+      - Build from source: development.md

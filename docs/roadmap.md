@@ -1,6 +1,11 @@
+---
+title: Roadmap
+description: Shipped releases, what's next, and what we've deliberately scoped out.
+---
+
 # Roadmap
 
-What's shipped, what's next, what we've deliberately scoped out. Revised on each release.
+What's shipped, what's next, and what we've deliberately scoped out. Revised on each release.
 
 *Last updated: 2026-04-22 (v1.5.8 + v1.6.0 shipped; plugin v1.6.0 alignment release.)*
 

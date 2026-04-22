@@ -1,3 +1,12 @@
+/* ─ overrides.css ─────────────────────────────────────────────────────────
+   Content-area fine-tuning. Tweaks Material's default article rendering
+   (.md-content, .md-content__inner, admonitions, tables, code blocks, etc.)
+   without re-skinning the theme.
+   Edit here when: you want to tweak how the body content looks on any
+   non-home page — spacing, admonition colours, table borders, code-block
+   backgrounds, etc.
+   ─────────────────────────────────────────────────────────────────────── */
+
 /*
  * obsidian-brain · tight Material-theme overrides
  *

@@ -1,3 +1,8 @@
+---
+title: Companion plugin
+description: Optional Obsidian plugin that unlocks active_note, dataview_query, and base_query by exposing live runtime state over a localhost HTTP endpoint.
+---
+
 # Companion Obsidian plugin
 
 `obsidian-brain` works against your vault's files on disk. Three kinds of data, however, **only exist inside a running Obsidian process**: Dataview DQL query results, Obsidian Bases view rows, and active-editor state (what note is open, cursor position). These require a small companion plugin that runs inside Obsidian.
@@ -40,7 +45,7 @@ Download `main.js` + `manifest.json` from the [latest release](https://github.co
 | `dataview_query` (v1.3.0+) | yes (plugin ≥ 0.2.0) | Runs a DQL query via the Dataview plugin. See [Dataview](#dataview) below. |
 | `base_query` (v1.4.0+) | yes (plugin ≥ 1.4.0, Obsidian ≥ 1.10.0, Bases core plugin enabled) | Evaluates an Obsidian Bases `.base` file. See [Bases](#bases) below. |
 
-Every other tool (`search`, `read_note`, `list_notes`, `find_connections`, `find_path_between`, `detect_themes`, `rank_notes`, `create_note`, `edit_note`, `link_notes`, `move_note`, `delete_note`, `reindex`) works standalone with or without the plugin.
+Every other tool (`search`, `read_note`, `list_notes`, `find_connections`, `find_path_between`, `detect_themes`, `rank_notes`, `create_note`, `edit_note`, `apply_edit_preview`, `link_notes`, `move_note`, `delete_note`, `reindex`) works standalone with or without the plugin.
 
 When the plugin is absent or unreachable, the plugin-dependent tools return an error containing the install instructions verbatim — the rest of the server keeps working normally.
 
