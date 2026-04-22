@@ -201,7 +201,7 @@ describe.sequential('ObsidianClient', () => {
     });
   });
 
-  it('dataview() surfaces a 424 as PluginUnavailableError with remediation text', async () => {
+  it('dataview() surfaces a 424 dataview_not_installed as PluginUnavailableError', async () => {
     server = createServer((_req, res) => {
       res.statusCode = 424;
       res.setHeader('content-type', 'application/json');
@@ -209,7 +209,7 @@ describe.sequential('ObsidianClient', () => {
         JSON.stringify({
           error: 'dataview_not_installed',
           message:
-            'The Dataview community plugin is not installed or not enabled in this vault. Install it from Settings → Community plugins and retry.',
+            "The Dataview community plugin is not installed in this vault. Install it: Obsidian → Settings → Community plugins → Browse → search 'Dataview' (by blacksmithgu) → Install → Enable.",
         }),
       );
     });
@@ -218,7 +218,49 @@ describe.sequential('ObsidianClient', () => {
     writeDiscovery(vault, { port, token: 'tok' });
     const client = new ObsidianClient(vault);
     await expect(client.dataview('TABLE file.name', undefined, 5000)).rejects.toThrow(
-      /Dataview community plugin is not installed/,
+      /Settings → Community plugins → Browse/,
+    );
+  });
+
+  it('dataview() surfaces a 424 dataview_not_enabled with toggle-on remediation', async () => {
+    server = createServer((_req, res) => {
+      res.statusCode = 424;
+      res.setHeader('content-type', 'application/json');
+      res.end(
+        JSON.stringify({
+          error: 'dataview_not_enabled',
+          message:
+            "The Dataview community plugin is installed but not enabled in this vault. Obsidian → Settings → Community plugins → toggle 'Dataview' on, then retry.",
+        }),
+      );
+    });
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', () => r()));
+    const port = await portOf(server);
+    writeDiscovery(vault, { port, token: 'tok' });
+    const client = new ObsidianClient(vault);
+    await expect(client.dataview('TABLE file.name', undefined, 5000)).rejects.toThrow(
+      /toggle 'Dataview' on/,
+    );
+  });
+
+  it('dataview() surfaces a 424 dataview_api_not_ready with reload-Obsidian remediation', async () => {
+    server = createServer((_req, res) => {
+      res.statusCode = 424;
+      res.setHeader('content-type', 'application/json');
+      res.end(
+        JSON.stringify({
+          error: 'dataview_api_not_ready',
+          message:
+            "The Dataview community plugin is enabled but its API isn't registered on app.plugins.plugins.dataview yet. Reload Obsidian (Command palette → 'Reload app without saving', or ⌘R / Ctrl+R) and retry — this usually clears within a few seconds of enabling the plugin.",
+        }),
+      );
+    });
+    await new Promise<void>((r) => server!.listen(0, '127.0.0.1', () => r()));
+    const port = await portOf(server);
+    writeDiscovery(vault, { port, token: 'tok' });
+    const client = new ObsidianClient(vault);
+    await expect(client.dataview('TABLE file.name', undefined, 5000)).rejects.toThrow(
+      /Reload Obsidian/,
     );
   });
 

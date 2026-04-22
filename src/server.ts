@@ -23,7 +23,7 @@ import { registerDataviewQueryTool } from './tools/dataview-query.js';
 
 export async function startServer(): Promise<void> {
   const ctx = await createContext();
-  const server = new McpServer({ name: 'obsidian-brain', version: '1.3.0' });
+  const server = new McpServer({ name: 'obsidian-brain', version: '1.3.1' });
 
   registerSearchTool(server, ctx);
   registerReadNoteTool(server, ctx);
