@@ -80,9 +80,11 @@ Why one file for all of it:
 
 Tradeoff: sqlite-vec does a full scan for kNN. This is fine at the vault sizes we target (50k notes: subsecond on commodity hardware). Past roughly 500k notes you'd want an ANN index and this decision would need re-evaluation.
 
-## Why local embeddings (Xenova all-MiniLM-L6-v2)
+## Why local embeddings (Xenova bge-small-en-v1.5)
 
-The default model is `Xenova/all-MiniLM-L6-v2` run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization (`src/embeddings/embedder.ts`).
+The default model is `Xenova/bge-small-en-v1.5` (since v1.5.2; previously `all-MiniLM-L6-v2`) run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization (`src/embeddings/embedder.ts`).
+
+**Preset resolver (v1.5.2+).** Rather than requiring users to memorise HF model paths, `src/embeddings/presets.ts` maps four named presets (`english`, `fastest`, `balanced`, `multilingual`) to concrete model ids. `createEmbedder()` in `src/embeddings/factory.ts` always calls `resolveEmbeddingModel(process.env)` to determine which checkpoint to load, honouring the precedence `EMBEDDING_MODEL > EMBEDDING_PRESET > default (english)`. Tests that construct `TransformersEmbedder` directly bypass the factory and therefore bypass the preset resolver — the `DEFAULT_MODEL` constant in `embedder.ts` intentionally stays at `all-MiniLM-L6-v2` so those tests remain deterministic regardless of env state.
 
 Why not an API like OpenAI's `text-embedding-3-small`:
 
@@ -119,7 +121,7 @@ When to disable (`OBSIDIAN_BRAIN_NO_WATCH=1`): vault on SMB/NFS/iCloud where FSE
 
 ## Why modular file layout
 
-Every source file under `src/` targets under 200 lines and has a single concern. The directory layout is:
+Most modules under `src/` stay under 200 lines; larger files reflect algorithm depth or SQL/type verbosity, not mixed concerns. The directory layout is:
 
 - `src/server.ts` — MCP server bootstrap. Instantiates `McpServer`, wires `StdioServerTransport`, registers every tool, and starts the live watcher.
 - `src/config.ts` / `src/context.ts` — env parsing and the shared `ServerContext` object (DB handle, embedder, vault path, pipeline, writer, search) passed to every tool.

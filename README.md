@@ -522,7 +522,8 @@ All config is via environment variables:
 |---|---|---|---|
 | `VAULT_PATH` | **yes** | — | Absolute path to the vault (folder of `.md` files). |
 | `DATA_DIR` | no | `$XDG_DATA_HOME/obsidian-brain` or `$HOME/.local/share/obsidian-brain` | Where the SQLite index + embedding cache live. |
-| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` | Sentence-embedding model. With `EMBEDDING_PROVIDER=transformers` (default) this is a Hugging Face transformers.js checkpoint; with `EMBEDDING_PROVIDER=ollama` it names the Ollama model (default: `nomic-embed-text`). See [Embedding model](#embedding-model) for alternatives. **Auto-reindex**: switching models is safe — the server stores the active model identifier + dim in the DB and rebuilds per-chunk vectors the next time it boots under a new identifier. No `--drop` required. |
+| `EMBEDDING_PRESET` | no | `english` | Preset name: `english` (default), `fastest`, `balanced`, `multilingual`. See [Embedding model](#embedding-model) for details. Ignored when `EMBEDDING_MODEL` is set. |
+| `EMBEDDING_MODEL` | no | *(resolved from preset)* | Power-user override: any transformers.js checkpoint (with `EMBEDDING_PROVIDER=transformers`) or Ollama model name (with `EMBEDDING_PROVIDER=ollama`). Takes precedence over `EMBEDDING_PRESET`. **Auto-reindex**: switching models is safe — the server stores the active model identifier + dim in the DB and rebuilds per-chunk vectors on next boot. No `--drop` required. |
 | `EMBEDDING_PROVIDER` | no | `transformers` | Embedder backend. `transformers` = local transformers.js (zero setup). `ollama` = local Ollama server via `/api/embeddings`. See [Alternative provider: Ollama](#alternative-provider-ollama). |
 | `OLLAMA_BASE_URL` | no | `http://localhost:11434` | Ollama server URL (only read when `EMBEDDING_PROVIDER=ollama`). |
 | `OLLAMA_EMBEDDING_DIM` | no | unset | Declared dim for the Ollama model. Optional — if unset the server probes the model on first startup. Useful for booting offline or pinning an expected dim. |
@@ -536,18 +537,73 @@ All config is via environment variables:
 
 ## Embedding model
 
-As of v1.4.0 the embedder is pluggable. Set `EMBEDDING_MODEL` to any
-transformers.js-compatible sentence-embedding checkpoint. The server records
-the active model (and its output dim) in the index. If you switch models the
-next startup detects the change, drops the old vectors, and rebuilds per-chunk
-embeddings against the new model — no manual `--drop` required.
+As of v1.4.0 the embedder is pluggable. As of v1.5.2 the easiest way to pick a
+model is `EMBEDDING_PRESET` — set it to a preset name instead of memorising HF
+model paths. `EMBEDDING_MODEL` still works for any custom checkpoint (power-user
+path; takes precedence when set). The server records the active model (and its
+output dim) in the index. If you switch models the next startup detects the
+change, drops the old vectors, and rebuilds per-chunk embeddings against the new
+model — no manual `--drop` required.
 
-| Model | Dim | Size | Notes |
+Example MCP client config with a preset:
+
+```json
+{
+  "mcpServers": {
+    "obsidian-brain": {
+      "command": "npx",
+      "args": ["-y", "obsidian-brain", "server"],
+      "env": {
+        "VAULT_PATH": "/absolute/path/to/your/vault",
+        "EMBEDDING_PRESET": "multilingual"
+      }
+    }
+  }
+}
+```
+
+| Tier | Model | Dim | Size | Notes |
+|---|---|---|---|---|
+| **Default (≤60 MB)** | `Xenova/bge-small-en-v1.5` | 384 | ~34 MB | **Default (v1.5.2+).** English, asymmetric. Best retrieval under budget. |
+| Default-tier alt | `Xenova/all-MiniLM-L6-v2` | 384 | ~23 MB | Previous default. English, symmetric. Fastest index build, smallest footprint. |
+| Default-tier alt | `Xenova/paraphrase-MiniLM-L3-v2` | 384 | ~17 MB | Tiny. English, symmetric. For constrained environments. |
+| Default-tier alt | `Xenova/all-MiniLM-L12-v2` | 384 | ~34 MB | English, symmetric. More depth than L6 at similar size. |
+| Default-tier alt | `Xenova/jina-embeddings-v2-small-en` | 512 | ~33 MB | English, symmetric. Long-context friendly. |
+| Power-user (over budget) | `Xenova/bge-base-en-v1.5` | 768 | ~110 MB | Best CPU quality, but above the default size budget. |
+| **Multilingual** | *(via Ollama)* | — | — | See below — no transformers.js multilingual model fits the ≤60 MB budget. |
+
+### Multilingual / non-English vaults
+
+Every viable multilingual embedding model is above our ≤60 MB default-tier size
+budget (smallest is `multilingual-e5-small` at 118 MB quantized). Rather than
+bundle that into the transformers.js default tier, we recommend users with
+non-English or mixed-language vaults switch to the Ollama provider:
+
+```bash
+ollama pull bge-m3              # or: nomic-embed-text, multilingual-e5-large
+export EMBEDDING_PROVIDER=ollama
+export EMBEDDING_MODEL=bge-m3
+```
+
+Ollama handles model storage out-of-band (not part of the npm install), so
+there's no bundle-size tax on Ollama-based multilingual support. `bge-m3` is a
+strong default — 100+ languages, dense + sparse + multi-vector heads, asymmetric
+query prefixing handled automatically by our Ollama task-type prefix logic.
+
+If you really need multilingual via transformers.js (e.g. you don't run Ollama),
+`Xenova/multilingual-e5-small` (118 MB) works — set `EMBEDDING_PRESET=multilingual`
+or `EMBEDDING_MODEL=Xenova/multilingual-e5-small`. Expect a one-time 118 MB
+download and a slower first-boot index. This is not the default tier.
+
+Rough speed numbers (single M1/M2 Mac, CPU-only, per chunk):
+
+| Preset | Approx. embed latency | 3k-note vault initial index | Model download |
 |---|---|---|---|
-| `Xenova/all-MiniLM-L6-v2` | 384 | ~22 MB | **Default.** Fast, small, solid baseline. |
-| `Xenova/bge-small-en-v1.5` | 384 | ~33 MB | Noticeably better retrieval at the same dim. |
-| `Xenova/bge-base-en-v1.5` | 768 | ~110 MB | Best quality on CPU. Slower embed, larger index. |
-| `Xenova/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~120 MB | Non-English vaults. |
+| `fastest` / `balanced` / `english` | ~30–60 ms / chunk | ~10–20 min | 17–34 MB, under a minute |
+| `multilingual` | ~60–150 ms / chunk | ~30–50 min | 118 MB, 1–3 min on 10 Mbps |
+
+Incremental reindex (post-initial) is imperceptibly different between presets
+because of SHA-256 content-hash dedup — only newly changed chunks get re-embedded.
 
 Since v1.4.0 embeddings are **chunk-level** — each note is split at markdown
 headings (H1–H4) and oversized sections are further split on paragraph /
@@ -604,7 +660,7 @@ Common issues below. Long-form walkthrough with more edge cases: [docs/troublesh
   # source clone:
   PATH=/opt/homebrew/bin:$PATH npm rebuild better-sqlite3
   ```
-- **Slow first run** — the 22 MB `all-MiniLM-L6-v2` embedding model downloads on first use and caches under `DATA_DIR`. The server also auto-indexes the full vault on first boot. Subsequent boots are fast.
+- **Slow first run** — the embedding model downloads on first use and caches under `DATA_DIR` (default: `bge-small-en-v1.5`, ~34 MB). The server also auto-indexes the full vault on first boot. Subsequent boots are fast.
 - **`Vault path not configured`** — `VAULT_PATH` isn't set. Set it in the `env` block of your Claude Desktop / Claude Code / Jan config, or export it in your shell. `KG_VAULT_PATH` is accepted as a legacy alias.
 - **Index stale after a manual edit outside Claude** — the `server` watcher normally picks up file changes within a few seconds. If it's not firing (vault on SMB/NFS, `OBSIDIAN_BRAIN_NO_WATCH=1` set somewhere, etc.) see [docs/troubleshooting.md → Watcher not firing](docs/troubleshooting.md#watcher-not-firing). To force an immediate refresh: call the `reindex` MCP tool from your client or run `VAULT_PATH=... obsidian-brain index`.
 - **Tool call hangs for minutes then "No result received" in Claude Desktop** — almost always a client-side stdio transport stall, not a server hang. Since v1.2.1 the server has its own 30s timeout that returns an actionable error. See [docs/troubleshooting.md → Tool calls hang for 4 minutes](docs/troubleshooting.md#tool-calls-hang-for-4-minutes-then-time-out-client-side) for how to tell which side the hang was on via the log, and [Collecting MCP server logs](docs/troubleshooting.md#collecting-mcp-server-logs) for the path.
@@ -645,7 +701,7 @@ obsidian-brain/
 └── dist/                      # tsc output (gitignored)
 ```
 
-Every source file targets <200 lines and has a single concern.
+Most modules stay under 200 lines; larger files reflect algorithm depth or SQL/type verbosity, not mixed concerns.
 
 Common commands:
 

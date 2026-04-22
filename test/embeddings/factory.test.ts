@@ -5,6 +5,7 @@ import { OllamaEmbedder } from '../../src/embeddings/ollama.js';
 
 const ENV_KEYS = [
   'EMBEDDING_PROVIDER',
+  'EMBEDDING_PRESET',
   'EMBEDDING_MODEL',
   'OLLAMA_BASE_URL',
   'OLLAMA_EMBEDDING_DIM',

@@ -1,6 +1,7 @@
 import type { Embedder } from './types.js';
 import { TransformersEmbedder } from './embedder.js';
 import { OllamaEmbedder } from './ollama.js';
+import { resolveEmbeddingModel } from './presets.js';
 
 /**
  * Build the Embedder indicated by `EMBEDDING_PROVIDER`. Default is
@@ -13,6 +14,12 @@ import { OllamaEmbedder } from './ollama.js';
  * ensureEmbedderReady/init sequence handles both providers uniformly.
  * For the Ollama path, `init()` probes the server once to populate
  * `dimensions()`, unless `OLLAMA_EMBEDDING_DIM` declared it up front.
+ *
+ * Model resolution (transformers provider):
+ *   resolveEmbeddingModel() handles EMBEDDING_MODEL > EMBEDDING_PRESET > default.
+ *   TransformersEmbedder's own DEFAULT_MODEL is left as MiniLM so that tests
+ *   which construct TransformersEmbedder directly (without going through the
+ *   factory) remain deterministic and don't depend on process.env state.
  */
 export function createEmbedder(): Embedder {
   const provider = (process.env.EMBEDDING_PROVIDER ?? 'transformers').toLowerCase();
@@ -30,7 +37,10 @@ export function createEmbedder(): Embedder {
     return new OllamaEmbedder(url, model, expectedDim);
   }
   if (provider === 'transformers') {
-    return new TransformersEmbedder();
+    // Always route through resolveEmbeddingModel so EMBEDDING_PRESET is honoured
+    // and the default flips to bge-small-en-v1.5 (v1.5.2+).
+    const model = resolveEmbeddingModel(process.env);
+    return new TransformersEmbedder(model);
   }
   throw new Error(
     `Unknown EMBEDDING_PROVIDER='${provider}'. Supported: 'transformers' (default), 'ollama'.`,

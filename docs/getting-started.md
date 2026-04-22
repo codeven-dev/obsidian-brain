@@ -29,7 +29,7 @@ For every other MCP client (Claude Code, Cursor, VS Code, Jan, Windsurf, Cline, 
 
 ## First boot
 
-On first launch the server auto-indexes your vault and downloads the ~22 MB embedding model. Initial `tools/list` may block for **30–60 s** — subsequent starts are instant. See [Architecture → indexing](architecture.md) for why.
+On first launch the server auto-indexes your vault and downloads the embedding model (~34 MB for the default `bge-small-en-v1.5`). Initial `tools/list` may block for **30–60 s** — subsequent starts are instant. See [Architecture → indexing](architecture.md) for why.
 
 No system-level prerequisites beyond Node 20+. The `better-sqlite3`, `sqlite-vec`, and ONNX runtime native bindings ship as prebuilt binaries for macOS, Linux, and Windows — no `brew install sqlite`, no Xcode Command Line Tools, no Python required.
 
@@ -41,7 +41,8 @@ All configuration is via environment variables. Only `VAULT_PATH` is required.
 |---|---|---|---|
 | `VAULT_PATH` | **yes** | — | Absolute path to the vault (folder of `.md` files). |
 | `DATA_DIR` | no | `$XDG_DATA_HOME/obsidian-brain` or `$HOME/.local/share/obsidian-brain` | Where the SQLite index + embedding cache live. |
-| `EMBEDDING_MODEL` | no | `Xenova/all-MiniLM-L6-v2` (transformers) · `nomic-embed-text` (ollama) | Sentence-embedding checkpoint. With `EMBEDDING_PROVIDER=transformers` (default) this is any transformers.js-compatible model; with `EMBEDDING_PROVIDER=ollama` it names an Ollama-pullable model. Switching models (or providers) triggers an automatic reindex on next boot — no `--drop` required. |
+| `EMBEDDING_PRESET` | no | `english` | Preset name. Options: `english` (default, `Xenova/bge-small-en-v1.5`), `fastest`, `balanced`, `multilingual`. See README for details. Ignored if `EMBEDDING_MODEL` is set. |
+| `EMBEDDING_MODEL` | no | *(resolved from preset)* | Power-user override: any transformers.js checkpoint (with `EMBEDDING_PROVIDER=transformers`) or Ollama model name (with `EMBEDDING_PROVIDER=ollama`). Takes precedence over `EMBEDDING_PRESET`. Switching models (or providers) triggers an automatic reindex on next boot — no `--drop` required. |
 | `EMBEDDING_PROVIDER` | no | `transformers` | Embedder backend: `transformers` (local, zero setup) or `ollama` (routes through a local Ollama server via `/api/embeddings`, v1.5.0+). |
 | `OLLAMA_BASE_URL` | no | `http://localhost:11434` | Only read when `EMBEDDING_PROVIDER=ollama`. |
 | `OLLAMA_EMBEDDING_DIM` | no | unset | Declared output dim for the Ollama model. If unset, the server probes the model on first startup. |
