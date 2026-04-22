@@ -67,6 +67,39 @@
           "description": "Override the embedding dimensionality when EMBEDDING_PROVIDER=ollama. If unset, the server probes the model on startup.",
           "isRequired": false,
           "format": "number"
+        },
+        {
+          "name": "OBSIDIAN_BRAIN_NO_WATCH",
+          "description": "Set to '1' to disable the live chokidar file watcher. Useful on SMB/NFS vaults where FSEvents/inotify don't fire reliably — fall back to running `obsidian-brain index` on a schedule (launchd/systemd).",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "OBSIDIAN_BRAIN_NO_CATCHUP",
+          "description": "Set to '1' to disable the startup catchup reindex that picks up edits made while the server was down.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "OBSIDIAN_BRAIN_WATCH_DEBOUNCE_MS",
+          "description": "Per-file reindex debounce for the live watcher, in milliseconds.",
+          "isRequired": false,
+          "format": "number",
+          "default": "3000"
+        },
+        {
+          "name": "OBSIDIAN_BRAIN_COMMUNITY_DEBOUNCE_MS",
+          "description": "Graph-wide community-detection (Louvain) debounce for the live watcher, in milliseconds. Louvain is the only expensive op — batching it prevents per-edit CPU spikes.",
+          "isRequired": false,
+          "format": "number",
+          "default": "60000"
+        },
+        {
+          "name": "OBSIDIAN_BRAIN_TOOL_TIMEOUT_MS",
+          "description": "Per-tool-call timeout in milliseconds. Tools exceeding this return an MCP error instead of hanging.",
+          "isRequired": false,
+          "format": "number",
+          "default": "30000"
         }
       ]
     }
