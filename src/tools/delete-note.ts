@@ -4,24 +4,7 @@ import { registerTool } from './register.js';
 import type { ServerContext } from '../context.js';
 import { resolveNodeName } from '../resolve/name-match.js';
 import { deleteNote, type DeleteResult } from '../vault/mover.js';
-
-/**
- * Minimal local mirror of the `ToolContext`/`NextAction` envelope shape that
- * `src/tools/hints.ts` (owned by v15-hints) defines. Kept inline here to
- * avoid a branch-merge conflict — v15-hints can consolidate both sites to
- * shared types when the branches meet. Matches the pass-through format the
- * registerTool shim documents in its v1.5.0 comment.
- */
-interface NextAction {
-  description: string;
-  tool: string;
-  args: Record<string, unknown>;
-  reason: string;
-}
-interface ToolEnvelope<T> {
-  data: T;
-  context: { next_actions: NextAction[] };
-}
+import type { ContextualResult } from './hints.js';
 
 /**
  * `delete_note` — unlink a note from disk and purge it from the index.
@@ -59,7 +42,7 @@ export function registerDeleteNoteTool(server: McpServer, ctx: ServerContext): v
 
       const edgesRemoved = result.deletedFromIndex.edges;
       if (edgesRemoved > 0) {
-        const envelope: ToolEnvelope<typeof payload> = {
+        const envelope: ContextualResult<typeof payload> = {
           data: payload,
           context: {
             next_actions: [
