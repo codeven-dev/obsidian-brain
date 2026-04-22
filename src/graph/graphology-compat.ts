@@ -11,6 +11,7 @@ import GraphImport from 'graphology';
 import louvainImport from 'graphology-communities-louvain';
 import pagerankImport from 'graphology-metrics/centrality/pagerank.js';
 import betweennessImport from 'graphology-metrics/centrality/betweenness.js';
+import modularityImport from 'graphology-metrics/graph/modularity.js';
 
 export type GraphOptions = {
   multi?: boolean;
@@ -62,3 +63,18 @@ export const pageRankFn = pagerankImport as unknown as (
 export const betweennessFn = betweennessImport as unknown as (
   graph: GraphInstance,
 ) => Record<string, number>;
+
+/**
+ * Modularity scorer from graphology-metrics. Signed in terms of our own
+ * `GraphInstance` for consistency with other helpers. `getNodeCommunity`
+ * accepts either an attribute name or a mapper `(node, attrs) => id`.
+ */
+export const louvainModularity = modularityImport as unknown as (
+  graph: GraphInstance,
+  options?: {
+    getNodeCommunity?:
+      | string
+      | ((node: string, attrs: Record<string, unknown>) => string | number);
+    resolution?: number;
+  },
+) => number;

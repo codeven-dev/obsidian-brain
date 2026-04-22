@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { openDb, type DatabaseHandle } from '../../src/store/db.js';
 import { upsertNode } from '../../src/store/nodes.js';
 import { upsertCommunity } from '../../src/store/communities.js';
+import { insertEdge } from '../../src/store/edges.js';
 import { registerDetectThemesTool } from '../../src/tools/detect-themes.js';
 import type { ServerContext } from '../../src/context.js';
 
@@ -121,5 +122,151 @@ describe('tools/detect_themes - A2 read-path consistency', () => {
     expect(cluster.nodeIds).toEqual(['a.md']);
     expect(cluster.summary).not.toContain('Ghost');
     expect(cluster.summary).toContain('1 nodes total');
+  });
+});
+
+describe('tools/detect_themes - H4 includeStubs + I modularity guard', () => {
+  let db: DatabaseHandle;
+
+  beforeEach(() => {
+    db = openDb(':memory:');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('includeStubs: false filters nodes with frontmatter._stub: true', async () => {
+    upsertNode(db, { id: 'real.md', title: 'Real', content: '', frontmatter: {} });
+    upsertNode(db, {
+      id: 'stub.md',
+      title: 'Stub',
+      content: '',
+      frontmatter: { _stub: true },
+    });
+    upsertCommunity(db, {
+      id: 0,
+      label: 'mixed',
+      summary: 'Key members: Real, Stub. 2 nodes total.',
+      nodeIds: ['real.md', 'stub.md'],
+    });
+
+    const { server, registered } = makeMockServer();
+    registerDetectThemesTool(server, { db } as unknown as ServerContext);
+    const tool = registered.find((t) => t.name === 'detect_themes')!;
+
+    const payload = unwrap(await tool.cb({ includeStubs: false }));
+    // Bare-array response shape when no modularity warning
+    const clusters = Array.isArray(payload) ? payload : payload.clusters;
+    expect(clusters[0].nodeIds).toEqual(['real.md']);
+    expect(clusters[0].summary).not.toContain('Stub');
+  });
+
+  it('includeStubs: true (default) keeps stub nodes in the membership', async () => {
+    upsertNode(db, { id: 'real.md', title: 'Real', content: '', frontmatter: {} });
+    upsertNode(db, {
+      id: 'stub.md',
+      title: 'Stub',
+      content: '',
+      frontmatter: { _stub: true },
+    });
+    upsertCommunity(db, {
+      id: 0,
+      label: 'mixed',
+      summary: 'Key members: Real, Stub. 2 nodes total.',
+      nodeIds: ['real.md', 'stub.md'],
+    });
+
+    const { server, registered } = makeMockServer();
+    registerDetectThemesTool(server, { db } as unknown as ServerContext);
+    const tool = registered.find((t) => t.name === 'detect_themes')!;
+
+    const payload = unwrap(await tool.cb({}));
+    const clusters = Array.isArray(payload) ? payload : payload.clusters;
+    expect(clusters[0].nodeIds).toEqual(['real.md', 'stub.md']);
+  });
+
+  it('adds warning + modularity on the envelope when a poor partition fails the 0.3 threshold', async () => {
+    // Two cached "clusters" that are actually densely cross-connected — a
+    // classic low-modularity case (partition barely improves on random).
+    for (let i = 0; i < 4; i++) {
+      upsertNode(db, {
+        id: `a${i}.md`,
+        title: `A${i}`,
+        content: '',
+        frontmatter: {},
+      });
+      upsertNode(db, {
+        id: `b${i}.md`,
+        title: `B${i}`,
+        content: '',
+        frontmatter: {},
+      });
+    }
+    // Fully-connected bipartite-ish edges between A and B cohorts => modularity
+    // of a bipartite-matching "community" split is near zero / negative.
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        insertEdge(db, { sourceId: `a${i}.md`, targetId: `b${j}.md`, context: '' });
+      }
+    }
+    upsertCommunity(db, {
+      id: 0,
+      label: 'A',
+      summary: 'A side',
+      nodeIds: ['a0.md', 'a1.md', 'a2.md', 'a3.md'],
+    });
+    upsertCommunity(db, {
+      id: 1,
+      label: 'B',
+      summary: 'B side',
+      nodeIds: ['b0.md', 'b1.md', 'b2.md', 'b3.md'],
+    });
+
+    const { server, registered } = makeMockServer();
+    registerDetectThemesTool(server, { db } as unknown as ServerContext);
+    const tool = registered.find((t) => t.name === 'detect_themes')!;
+
+    const payload = unwrap(await tool.cb({}));
+    expect(Array.isArray(payload)).toBe(false);
+    expect(payload.warning).toMatch(/modularity/);
+    expect(payload.warning).toMatch(/not clearly separable/);
+    expect(typeof payload.modularity).toBe('number');
+    expect(payload.modularity).toBeLessThan(0.3);
+    expect(Array.isArray(payload.clusters)).toBe(true);
+    expect(payload.clusters).toHaveLength(2);
+  });
+
+  it('no warning / bare array response when modularity is above threshold', async () => {
+    // Two disjoint triangles — a textbook high-modularity partition.
+    for (const id of ['a1.md', 'a2.md', 'a3.md', 'b1.md', 'b2.md', 'b3.md']) {
+      upsertNode(db, { id, title: id, content: '', frontmatter: {} });
+    }
+    insertEdge(db, { sourceId: 'a1.md', targetId: 'a2.md', context: '' });
+    insertEdge(db, { sourceId: 'a2.md', targetId: 'a3.md', context: '' });
+    insertEdge(db, { sourceId: 'a3.md', targetId: 'a1.md', context: '' });
+    insertEdge(db, { sourceId: 'b1.md', targetId: 'b2.md', context: '' });
+    insertEdge(db, { sourceId: 'b2.md', targetId: 'b3.md', context: '' });
+    insertEdge(db, { sourceId: 'b3.md', targetId: 'b1.md', context: '' });
+    upsertCommunity(db, {
+      id: 0,
+      label: 'A',
+      summary: 'A',
+      nodeIds: ['a1.md', 'a2.md', 'a3.md'],
+    });
+    upsertCommunity(db, {
+      id: 1,
+      label: 'B',
+      summary: 'B',
+      nodeIds: ['b1.md', 'b2.md', 'b3.md'],
+    });
+
+    const { server, registered } = makeMockServer();
+    registerDetectThemesTool(server, { db } as unknown as ServerContext);
+    const tool = registered.find((t) => t.name === 'detect_themes')!;
+
+    const payload = unwrap(await tool.cb({}));
+    expect(Array.isArray(payload)).toBe(true);
+    expect(payload).toHaveLength(2);
   });
 });

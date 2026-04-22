@@ -4,9 +4,25 @@ import { registerTool } from './register.js';
 import type { ServerContext } from '../context.js';
 import { getAllCommunities, getCommunity } from '../store/communities.js';
 import { getNode } from '../store/nodes.js';
-import { buildSummary, type SummaryMember } from '../graph/communities.js';
+import {
+  buildSummary,
+  computeModularity,
+  type SummaryMember,
+} from '../graph/communities.js';
+import { KnowledgeGraph } from '../graph/builder.js';
 import type { Community } from '../types.js';
 import type { DatabaseHandle } from '../store/db.js';
+
+const MODULARITY_WARN_THRESHOLD = 0.3;
+
+interface ReconciledCommunity extends Community {
+  staleMembersFiltered: number;
+}
+
+interface DetectThemesWarning {
+  modularity: number;
+  message: string;
+}
 
 export function registerDetectThemesTool(
   server: McpServer,
@@ -15,17 +31,57 @@ export function registerDetectThemesTool(
   registerTool(
     server,
     'detect_themes',
-    'List auto-detected topic clusters across the vault (served from the community-detection cache). Pass a theme id or label to drill into one cluster. To recompute with a different Louvain resolution, call `reindex({ resolution: X })` first — `detect_themes` itself is a read-only tool. Each returned cluster carries `staleMembersFiltered` — the number of cached `nodeIds` that no longer exist in the vault and were dropped on this read. A positive value means the cached community row is lagging; the filter also regenerates `summary` so it stays consistent with the filtered `nodeIds`.',
+    "List auto-detected topic clusters across the vault (served from the community-detection cache). Pass a theme id or label to drill into one cluster. To recompute with a different Louvain resolution, call `reindex({ resolution: X })` first — `detect_themes` itself is a read-only tool. Each returned cluster carries `staleMembersFiltered` — the number of cached `nodeIds` that no longer exist in the vault and were dropped on this read. A positive value means the cached community row is lagging; the filter also regenerates `summary` so it stays consistent with the filtered `nodeIds`. Pass `includeStubs: false` to exclude unresolved wiki-link targets (`frontmatter._stub: true`) from cluster memberships. When the overall vault graph has LOW modularity (<0.3), the response includes `{ warning, modularity }` at the envelope top-level — the clusters aren't clearly separable on this graph and may not reflect meaningful themes.",
     {
       themeId: z.string().optional(),
+      includeStubs: z.boolean().optional().default(true),
     },
     async (args) => {
-      const { themeId } = args;
+      const { themeId, includeStubs } = args;
+      // Match list-notes.ts (v1.2.2): treat `includeStubs === false` as opt-out;
+      // undefined/true preserves the backcompat default of keeping stubs.
+      const excludeStubs = includeStubs === false;
       if (themeId !== undefined) {
         const community = getCommunity(ctx.db, themeId);
-        return community === null ? null : reconcileCommunity(ctx.db, community);
+        if (community === null) return null;
+        return reconcileCommunity(ctx.db, community, excludeStubs);
       }
-      return getAllCommunities(ctx.db).map((c) => reconcileCommunity(ctx.db, c));
+      const clusters = getAllCommunities(ctx.db).map((c) =>
+        reconcileCommunity(ctx.db, c, excludeStubs),
+      );
+
+      // Modularity guard (I). Recompute modularity from the live graph + the
+      // cached community assignments so callers see a stable quality metric
+      // for the current cache. Skip silently if the graph is too small to
+      // score — tiny graphs surface as NaN/0 in graphology-metrics.
+      let warning: DetectThemesWarning | undefined;
+      try {
+        const kg = KnowledgeGraph.fromStore(ctx.db);
+        const undirected = kg.toUndirected();
+        if (undirected.order >= 3 && undirected.size >= 1) {
+          const assignments: Record<string, number> = {};
+          for (const c of clusters) {
+            for (const id of c.nodeIds) assignments[id] = c.id;
+          }
+          const modularity = computeModularity(undirected, assignments);
+          if (
+            Number.isFinite(modularity) &&
+            modularity < MODULARITY_WARN_THRESHOLD
+          ) {
+            warning = {
+              modularity,
+              message: `communities not clearly separable on this vault (modularity: ${modularity.toFixed(3)}). Try rerunning with a different resolution, or accept that the graph is either too dense or too sparse for clean clustering.`,
+            };
+          }
+        }
+      } catch {
+        // Never fail detect_themes because modularity couldn't be scored —
+        // the clusters themselves are the product; the warning is advisory.
+      }
+
+      return warning === undefined
+        ? clusters
+        : { clusters, warning: warning.message, modularity: warning.modularity };
     },
   );
 }
@@ -43,12 +99,14 @@ export function registerDetectThemesTool(
 function reconcileCommunity(
   db: DatabaseHandle,
   community: Community,
-): Community & { staleMembersFiltered: number } {
+  excludeStubs: boolean,
+): ReconciledCommunity {
   const liveIds: string[] = [];
   const members: SummaryMember[] = [];
   for (const id of community.nodeIds) {
     const node = getNode(db, id);
     if (!node) continue;
+    if (excludeStubs && node.frontmatter._stub === true) continue;
     liveIds.push(id);
     const tags = Array.isArray(node.frontmatter.tags)
       ? (node.frontmatter.tags as string[])

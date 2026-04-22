@@ -1,4 +1,8 @@
-import { type GraphInstance, louvain } from './graphology-compat.js';
+import {
+  type GraphInstance,
+  louvain,
+  louvainModularity,
+} from './graphology-compat.js';
 import type { Community } from '../types.js';
 import { pageRank } from './centrality.js';
 
@@ -102,4 +106,25 @@ export function detectCommunities(
   }
 
   return communities;
+}
+
+/**
+ * Score modularity of a community partition on an undirected graph.
+ *
+ * Louvain maximizes modularity — values close to 1 indicate strongly
+ * separable communities; values near 0 (or negative) mean the partition
+ * barely improves on random assignment. `detect_themes` warns callers
+ * when this score drops below 0.3, which is the conventional "clusters
+ * are meaningful" threshold in the network-science literature.
+ *
+ * Wraps graphology-communities-louvain's `.modularity` helper so callers
+ * don't import louvain directly just for scoring.
+ */
+export function computeModularity(
+  graph: GraphInstance,
+  assignments: Record<string, number>,
+): number {
+  return louvainModularity(graph, {
+    getNodeCommunity: (node) => assignments[node] ?? -1,
+  });
 }
