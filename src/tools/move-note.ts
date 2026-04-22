@@ -13,7 +13,7 @@ export function registerMoveNoteTool(server: McpServer, ctx: ServerContext): voi
   registerTool(
     server,
     'move_note',
-    'Rename or move a note. Existing wiki-links pointing at the old name will break until a re-index and link fix-up catch up — use carefully.',
+    'Rename or move a note. Existing wiki-links pointing at the old name will break until a re-index and link fix-up catch up — use carefully. If the note\'s frontmatter has a `title:` field matching the old basename, it\'s auto-rewritten to the new basename on rename (custom titles and missing titles are left alone).',
     {
       source: z.string(),
       destination: z.string().min(1),

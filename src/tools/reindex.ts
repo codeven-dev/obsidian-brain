@@ -7,14 +7,16 @@ export function registerReindexTool(server: McpServer, ctx: ServerContext): void
   registerTool(
     server,
     'reindex',
-    'Force a full re-index of the vault. Normally the index is rebuilt automatically on a schedule; call this only if a tool reported stale results.',
+    'Re-index the vault: re-embeds notes whose mtime changed, re-runs community detection (default resolution 1.0), prunes orphans. Pass `resolution` to tune cluster granularity (0.5 = fewer/broader clusters, 2.0 = more/finer).',
     {
-      resolution: z.number().positive().optional(),
+      resolution: z.number().positive().default(1.0),
     },
     async (args) => {
-      // Pass `resolution` through as-is (may be undefined). When the caller
-      // passes it, `index()` uses it as an "explicit intent" signal to
-      // refresh communities even if nothing else changed.
+      // `resolution` is always defined now (defaults to 1.0 in the Zod
+      // schema). Passing it through keeps `index()` in its existing
+      // "explicit intent => refresh communities" branch so bare `reindex()`
+      // produces `communitiesDetected > 0` on a non-empty vault, matching
+      // the rewritten description.
       const { resolution } = args;
       await ctx.ensureEmbedderReady();
       return ctx.pipeline.index(ctx.config.vaultPath, resolution);
