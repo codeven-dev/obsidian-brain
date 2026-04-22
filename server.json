@@ -1,7 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.sweir1/obsidian-brain",
+  "title": "Obsidian Brain",
   "description": "Obsidian MCP server: semantic search, knowledge graph, and vault editing. No plugin required.",
+  "websiteUrl": "https://sweir1.github.io/obsidian-brain/",
   "repository": {
     "url": "https://github.com/sweir1/obsidian-brain",
     "source": "github"
