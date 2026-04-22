@@ -80,7 +80,7 @@ Why one file for all of it:
 
 Tradeoff: sqlite-vec does a full scan for kNN. This is fine at the vault sizes we target (50k notes: subsecond on commodity hardware). Past roughly 500k notes you'd want an ANN index and this decision would need re-evaluation.
 
-## Why local embeddings (Xenova bge-small-en-v1.5)
+## Why local embeddings
 
 The default model is `Xenova/bge-small-en-v1.5` (since v1.5.2; previously `all-MiniLM-L6-v2`) run locally via `@huggingface/transformers` with `dtype: 'q8'` quantization (`src/embeddings/embedder.ts`).
 

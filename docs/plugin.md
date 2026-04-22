@@ -28,6 +28,10 @@ On plugin load:
 
 Download `main.js` + `manifest.json` from the [latest release](https://github.com/sweir1/obsidian-brain-plugin/releases/latest), drop them into `{VAULT}/.obsidian/plugins/obsidian-brain-companion/`, reload Obsidian, enable under Community plugins.
 
+## Version compatibility
+
+**Rule of thumb:** install the **same major.minor** on both sides (server `1.5.x` pairs with plugin `1.5.x`) — that's the tested, supported combo. Patch-version drift (e.g. server `1.5.4` + plugin `1.5.2`) is fine. Other combinations often work thanks to capability gating — the plugin advertises its supported routes in `discovery.json` and the server fails loudly with a clean "upgrade plugin vX.Y+" error if a required capability is missing — but aren't explicitly tested and aren't guaranteed. If you mix and something breaks, upgrade the lagging side.
+
 ## Which tools require it
 
 | Tool | Needs plugin? | Notes |

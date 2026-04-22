@@ -34,6 +34,14 @@ permissions:
   id-token: write   # OIDC for both npm and mcp-publisher
   contents: read
 
+env:
+  # Pin transformers.js model cache to a known path so actions/cache can
+  # restore+save it across runs. The embedder reads this env var (see
+  # src/embeddings/embedder.ts) and overrides transformers.js's `./.cache`
+  # default. Without this override, models sometimes land outside the
+  # workspace and actions/cache warns "path does not exist" on save.
+  TRANSFORMERS_CACHE: ${{ github.workspace }}/.cache/huggingface
+
 concurrency:
   group: release
   cancel-in-progress: false
@@ -89,10 +97,9 @@ jobs:
       - name: Cache Hugging Face embedding model
         uses: actions/cache@v5
         with:
-          # @huggingface/transformers (Node) caches to `${cwd}/.cache/` by
-          # default — NOT `~/.cache/huggingface`. `npm run smoke` runs from
-          # the workspace root, so the actual cache lives here.
-          path: ${{ github.workspace }}/.cache
+          # Matches the TRANSFORMERS_CACHE env var set at job level, which
+          # the embedder picks up and forces transformers.js to use.
+          path: ${{ github.workspace }}/.cache/huggingface
           key: hf-Xenova-bge-small-en-v1.5
           # Partial-match fallback: if the key's version suffix ever changes
           # (e.g. bge-small-en-v1.5 → v2.0), restore the prior bge-small

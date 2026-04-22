@@ -264,7 +264,7 @@ EMBEDDING_MODEL=Xenova/bge-base-en-v1.5 obsidian-brain server
 EMBEDDING_PROVIDER=ollama EMBEDDING_MODEL=nomic-embed-text obsidian-brain server
 ```
 
-On the next startup the server logs a single reason line ("Embedding model changed: X(d) → Y(d'). Auto-reindexing.") and rebuilds per-chunk embeddings. See [Architecture → Why local embeddings](./architecture.md#why-local-embeddings-xenova-all-minilm-l6-v2) for the bootstrap flow.
+On the next startup the server logs a single reason line ("Embedding model changed: X(d) → Y(d'). Auto-reindexing.") and rebuilds per-chunk embeddings. See [Architecture → Why local embeddings](./architecture.md#why-local-embeddings) for the bootstrap flow.
 
 ---
 

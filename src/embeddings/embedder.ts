@@ -1,5 +1,13 @@
-import { pipeline } from '@huggingface/transformers';
+import { pipeline, env as hfEnv } from '@huggingface/transformers';
 import type { Embedder as EmbedderInterface } from './types.js';
+
+// Honour TRANSFORMERS_CACHE (and HF_HOME, the HF Python convention) if set,
+// overriding transformers.js's default of `./.cache`. Lets CI pin the cache
+// to a known path (see .github/workflows/release.yml) for `actions/cache`.
+const cacheOverride = process.env.TRANSFORMERS_CACHE ?? process.env.HF_HOME;
+if (cacheOverride) {
+  hfEnv.cacheDir = cacheOverride;
+}
 
 /**
  * Return the task-type prefix required by asymmetric embedding models.

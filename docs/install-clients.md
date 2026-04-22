@@ -11,7 +11,7 @@ Replace `/absolute/path/to/your/vault` everywhere with the real path to your vau
 
 On first boot the server auto-indexes the vault and downloads the embedding model (~34 MB for the default `bge-small-en-v1.5`) — initial `tools/list` may block for 30–60 s, subsequent starts are instant.
 
-> **Embedding preset knob.** Any config below accepts `EMBEDDING_PRESET` in its `env` block as an optional upgrade. Valid values: `english` (default), `fastest`, `balanced`, `multilingual`. Example: add `"EMBEDDING_PRESET": "multilingual"` alongside `VAULT_PATH` to switch to a multilingual model. See the [README Embedding model section](../README.md#embedding-model) for the full preset table and multilingual guidance.
+> **Embedding preset knob.** Any config below accepts `EMBEDDING_PRESET` in its `env` block as an optional upgrade. Valid values: `english` (default), `fastest`, `balanced`, `multilingual`. Example: add `"EMBEDDING_PRESET": "multilingual"` alongside `VAULT_PATH` to switch to a multilingual model. See the [GitHub README's Embedding model section](https://github.com/sweir1/obsidian-brain#embedding-model) for the full preset table and multilingual guidance.
 
 No system-level prerequisites beyond Node 20+. `npm install` bundles every native binding — `better-sqlite3` (with its own statically-linked SQLite build), the `sqlite-vec` extension, and the ONNX runtime for local embeddings — as prebuilt binaries for macOS, Linux, and Windows. You don't need `brew install sqlite`, Xcode Command Line Tools, or Python unless you land in the rare case where no prebuilt matches your Node version (see [Troubleshooting → ERR_DLOPEN_FAILED](troubleshooting.md#err_dlopen_failed-node_module_version-mismatch)).
 

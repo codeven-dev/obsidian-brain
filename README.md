@@ -737,6 +737,8 @@ Three kinds of data only exist inside a running Obsidian process: Dataview DQL r
 
 When the plugin is installed and Obsidian is open, `active_note` (v1.2.0), `dataview_query` (v1.3.0), and `base_query` (v1.4.0) light up. Every other tool keeps working with or without the plugin.
 
+**Version rule of thumb:** install the **same major.minor** on both sides (server `1.5.x` ↔ plugin `1.5.x`) — that's the tested, supported combo. Patch-version drift (e.g. server `1.5.4` + plugin `1.5.2`) is fine. Other combos often work via capability gating in `discovery.json` but aren't guaranteed — see [Version compatibility](docs/plugin.md#version-compatibility).
+
 Details, security model, troubleshooting: [`docs/plugin.md`](docs/plugin.md).
 
 ## What it does *not* do (yet)
