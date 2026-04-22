@@ -1,0 +1,107 @@
+name: Release
+
+# Triggered by pushing a version tag like v1.5.2.
+# Suggested local flow:
+#   npm version patch        # bumps package.json + commits + creates v<x.y.z> tag
+#   git push --follow-tags   # pushes commit + tag, fires this workflow
+#
+# The tag is the single source of truth for the published version — this
+# workflow rewrites package.json.version + server.json.version +
+# server.json.packages[0].version to match the tag before publishing,
+# so the three can never drift.
+#
+# One-time setup required before the first run of this workflow:
+#   1. npmjs.com → obsidian-brain → Settings → Trusted Publishers → Add:
+#        - Publisher: GitHub Actions
+#        - Organization or user: sweir1
+#        - Repository: obsidian-brain
+#        - Workflow filename: release.yml
+#        - Environment: (leave blank)
+#      This lets `npm publish` authenticate via OIDC instead of NPM_TOKEN.
+#   2. No setup needed for the MCP Registry — the io.github.sweir1/* namespace
+#      is bound to OIDC tokens issued for repos under github.com/sweir1/*.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (without leading v), e.g. 1.5.2. Must not already exist on npm."
+        required: true
+
+permissions:
+  id-token: write   # OIDC for both npm and mcp-publisher
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish to npm + MCP Registry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Resolved version '$VERSION' is not valid semver"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Sync versions in package.json + server.json from tag
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.json.tmp
+          mv server.json.tmp server.json
+          echo "--- package.json ---"
+          jq '{name, version, mcpName}' package.json
+          echo "--- server.json ---"
+          jq '{name, version, packages: [.packages[] | {identifier, version}]}' server.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test (MCP handshake + every tool)
+        run: npm run smoke
+
+      - name: Publish to npm (OIDC, with provenance)
+        run: npm publish --access public
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Login to MCP Registry (OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Validate server.json
+        run: ./mcp-publisher validate
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish
