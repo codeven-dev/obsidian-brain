@@ -3,6 +3,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerTool } from './register.js';
 import type { ServerContext } from '../context.js';
 import { getAllCommunities, getCommunity } from '../store/communities.js';
+import { getNode } from '../store/nodes.js';
+import { buildSummary, type SummaryMember } from '../graph/communities.js';
+import type { Community } from '../types.js';
+import type { DatabaseHandle } from '../store/db.js';
 
 export function registerDetectThemesTool(
   server: McpServer,
@@ -11,16 +15,57 @@ export function registerDetectThemesTool(
   registerTool(
     server,
     'detect_themes',
-    'List auto-detected topic clusters across the vault (served from the community-detection cache). Pass a theme id or label to drill into one cluster. To recompute with a different Louvain resolution, call `reindex({ resolution: X })` first — `detect_themes` itself is a read-only tool.',
+    'List auto-detected topic clusters across the vault (served from the community-detection cache). Pass a theme id or label to drill into one cluster. To recompute with a different Louvain resolution, call `reindex({ resolution: X })` first — `detect_themes` itself is a read-only tool. Each returned cluster carries `staleMembersFiltered` — the number of cached `nodeIds` that no longer exist in the vault and were dropped on this read. A positive value means the cached community row is lagging; the filter also regenerates `summary` so it stays consistent with the filtered `nodeIds`.',
     {
       themeId: z.string().optional(),
     },
     async (args) => {
       const { themeId } = args;
       if (themeId !== undefined) {
-        return getCommunity(ctx.db, themeId);
+        const community = getCommunity(ctx.db, themeId);
+        return community === null ? null : reconcileCommunity(ctx.db, community);
       }
-      return getAllCommunities(ctx.db);
+      return getAllCommunities(ctx.db).map((c) => reconcileCommunity(ctx.db, c));
     },
   );
+}
+
+/**
+ * Belt-and-braces read-path reconciliation. The write-path prune in
+ * `pruneNodeFromCommunities` already keeps the cache fresh on `deleteNote`,
+ * but a process that crashes mid-delete or a schema shared across older
+ * sessions can leave ghost ids behind. Re-verify every member id against
+ * the live node store and regenerate `summary` if the list shrank.
+ *
+ * Adds `staleMembersFiltered: number` so callers (and the verification test
+ * in feedback) can detect the half-invalidated-cache condition cleanly.
+ */
+function reconcileCommunity(
+  db: DatabaseHandle,
+  community: Community,
+): Community & { staleMembersFiltered: number } {
+  const liveIds: string[] = [];
+  const members: SummaryMember[] = [];
+  for (const id of community.nodeIds) {
+    const node = getNode(db, id);
+    if (!node) continue;
+    liveIds.push(id);
+    const tags = Array.isArray(node.frontmatter.tags)
+      ? (node.frontmatter.tags as string[])
+      : [];
+    members.push({ title: node.title, tags });
+  }
+
+  const staleMembersFiltered = community.nodeIds.length - liveIds.length;
+  if (staleMembersFiltered === 0) {
+    return { ...community, staleMembersFiltered: 0 };
+  }
+
+  const summary = buildSummary(members, liveIds.length);
+  return {
+    ...community,
+    nodeIds: liveIds,
+    summary,
+    staleMembersFiltered,
+  };
 }

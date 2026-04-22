@@ -98,3 +98,80 @@ describe('editor - patch_heading scope + blank-line preservation (F4/F5)', () =>
     expect(await read()).toBe('## H\n\nnew body\n## Next\n');
   });
 });
+
+// v1.4.0 A4: `removedLen` on the EditResult + body-scope double-blank fix.
+describe('editor - patch_heading removedLen + body-scope (v1.4.0 A4)', () => {
+  it('section-scope on the LAST heading reports non-zero removedLen so callers can detect greedy EOF consumption', async () => {
+    // Feedback's "trailing heading eats to EOF" scenario: the default scope
+    // consumes the trailing paragraph silently. `removedLen` lets callers
+    // notice.
+    await seed(
+      '## Only Heading\nfirst body line\n\nAppended trailer line.\n',
+    );
+    const result = await edit({
+      kind: 'patch_heading',
+      heading: 'Only Heading',
+      content: 'replacement',
+      op: 'replace',
+      // default scope: 'section'
+    });
+    expect(result.removedLen).toBeGreaterThan(0);
+    const after = await read();
+    // Confirm the greedy consumption — the trailer IS gone.
+    expect(after).not.toContain('Appended trailer line.');
+    expect(after).toContain('replacement');
+  });
+
+  it("body-scope replace does NOT produce a double blank line before the next block", async () => {
+    // Reproduces the v1.4.0 feedback cosmetic: body-scope replace emitted
+    // two blank lines where one was correct. The fix eats the trailing
+    // boundary blank during splice so the content's own `\n` suffix provides
+    // the separator.
+    await seed('## A\n\nold body\n\n## Next\n');
+    await edit({
+      kind: 'patch_heading',
+      heading: 'A',
+      content: 'new body\n',
+      op: 'replace',
+      scope: 'body',
+    });
+    const after = await read();
+    // No triple-newline anywhere, which is the observable form of "double
+    // blank line in rendered Obsidian".
+    expect(after).not.toMatch(/\n\n\n/);
+    expect(after).toContain('new body');
+    expect(after).toContain('## Next');
+  });
+
+  it('body-scope replace reports a non-zero removedLen for the consumed body', async () => {
+    await seed('## A\n\nbody to remove\n\n## Next\n');
+    const result = await edit({
+      kind: 'patch_heading',
+      heading: 'A',
+      content: 'replacement',
+      op: 'replace',
+      scope: 'body',
+    });
+    expect(result.removedLen).toBeGreaterThan(0);
+  });
+
+  it('op: "before" / "after" report removedLen: 0 (insert-only paths)', async () => {
+    await seed('## A\nbody\n');
+    const before = await edit({
+      kind: 'patch_heading',
+      heading: 'A',
+      content: 'INS',
+      op: 'before',
+    });
+    expect(before.removedLen).toBe(0);
+    // Reset for the second case.
+    await seed('## A\nbody\n');
+    const after = await edit({
+      kind: 'patch_heading',
+      heading: 'A',
+      content: 'INS',
+      op: 'after',
+    });
+    expect(after.removedLen).toBe(0);
+  });
+});

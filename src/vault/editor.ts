@@ -33,11 +33,21 @@ export type EditMode =
 export interface EditResult {
   path: string;
   bytesWritten: number;
+  /**
+   * Number of bytes consumed by this edit on the replacement path — i.e. how
+   * much pre-existing content was removed before inserting `content`. For
+   * insert-only modes (`append`, `prepend`, `at_line` with `op: 'before' |
+   * 'after'`) this is always 0. Surfaced specifically so `patch_heading`
+   * callers can detect when the default greedy `section` scope consumed more
+   * than they expected (e.g. trailing content past a blank line on the last
+   * heading).
+   */
+  removedLen: number;
   diff: { before: string; after: string };
 }
 
 const CTX = 500;
-type Apply = { next: string; at: number; len: number };
+type Apply = { next: string; at: number; len: number; removedLen: number };
 
 function ctx(s: string, at: number, len: number): string {
   const half = Math.floor(CTX / 2);
@@ -70,6 +80,7 @@ export async function editNote(
   return {
     path: abs,
     bytesWritten: Buffer.byteLength(res.next, 'utf-8'),
+    removedLen: res.removedLen,
     diff: { before: ctx(original, res.at, res.len), after: ctx(res.next, res.at, res.len) },
   };
 }
@@ -85,6 +96,7 @@ function applyEdit(s: string, mode: EditMode): Apply {
         next: s + prefix + mode.content,
         at: s.length + prefix.length,
         len: mode.content.length,
+        removedLen: 0,
       };
     }
     case 'prepend': {
@@ -97,6 +109,7 @@ function applyEdit(s: string, mode: EditMode): Apply {
         next: s.slice(0, insertAt) + mode.content + s.slice(insertAt),
         at: insertAt,
         len: mode.content.length,
+        removedLen: 0,
       };
     }
     case 'replace_window':
@@ -127,6 +140,7 @@ function replaceWindow(s: string, search: string, content: string, fuzzy: boolea
       next: s.slice(0, first) + content + s.slice(first + search.length),
       at: first,
       len: content.length,
+      removedLen: Buffer.byteLength(search, 'utf-8'),
     };
   }
   const matches = fuzzyFind(s, search, 0.7);
@@ -154,6 +168,7 @@ function replaceWindow(s: string, search: string, content: string, fuzzy: boolea
     next: s.slice(0, h.start) + content + s.slice(end),
     at: h.start,
     len: content.length,
+    removedLen: Buffer.byteLength(s.slice(h.start, end), 'utf-8'),
   };
 }
 
@@ -177,21 +192,36 @@ function patchHeading(
 
   if (op === 'before') {
     lines.splice(hitIdx, 0, content);
-    return { next: lines.join('\n'), at: lineOffset(lines, hitIdx), len: content.length };
+    return {
+      next: lines.join('\n'),
+      at: lineOffset(lines, hitIdx),
+      len: content.length,
+      removedLen: 0,
+    };
   }
   if (op === 'after') {
     lines.splice(hitIdx + 1, 0, content);
-    return { next: lines.join('\n'), at: lineOffset(lines, hitIdx + 1), len: content.length };
+    return {
+      next: lines.join('\n'),
+      at: lineOffset(lines, hitIdx + 1),
+      len: content.length,
+      removedLen: 0,
+    };
   }
 
   // 'replace' — compute end of the region we replace.
   // - scope 'section' (default): everything from the heading to the next heading
   //   of <= same level, or EOF. This is the historical behaviour and can be
   //   greedy on the last heading (consumes trailing content that's visually
-  //   separate). Callers who want safety pass scope 'body'.
+  //   separate). Callers who want safety pass scope 'body'. `removedLen` in
+  //   the result lets callers detect over-consumption.
   // - scope 'body': stop at the first blank line that FOLLOWS content (i.e.
   //   the blank-line boundary after the immediately-following paragraph), or
-  //   at the next same-or-higher heading, whichever comes first.
+  //   at the next same-or-higher heading, whichever comes first. Once found,
+  //   we extend the range to swallow that boundary blank so the inserted
+  //   content's own trailing `\n` provides the separator — otherwise callers
+  //   who pass `'new body\n'` get two blank lines between their body and the
+  //   next block.
   let endIdx = lines.length;
   if (scope === 'body') {
     let seenContent = false;
@@ -202,6 +232,10 @@ function patchHeading(
       if (!isBlank) seenContent = true;
       if (seenContent && isBlank) { endIdx = j; break; }
     }
+    // Eat the trailing blank so we don't produce a double blank on replace.
+    if (endIdx < lines.length && lines[endIdx].trim() === '') {
+      endIdx += 1;
+    }
   } else {
     for (let j = hitIdx + 1; j < lines.length; j++) {
       const hm = lines[j].match(/^(#+)\s+/);
@@ -209,15 +243,33 @@ function patchHeading(
     }
   }
 
-  // Preserve the blank line immediately after the heading when one is present.
-  // `# H\n\nold\n` patched → `# H\n\nnew\n`, not `# H\nnew\n`.
+  // Preserve the blank line immediately after the heading when one exists
+  // in the original. `# H\n\nold\n` patched → `# H\n\nnew\n`, not
+  // `# H\nnew\n`. When the original has no blank, we don't inject one —
+  // existing tests (and the Obsidian community-varied convention) expect
+  // `# H\nbody` to round-trip as `# H\nnew body`.
   let contentStart = hitIdx + 1;
   if (contentStart < lines.length && lines[contentStart].trim() === '' && contentStart < endIdx) {
     contentStart++;
   }
 
+  // Capture the byte length of the region we're about to remove, for the
+  // `removedLen` field on the result. `lineOffset` totals length + newline
+  // per line; we compute the same way so the two halves agree.
+  const removedText = lines.slice(contentStart, endIdx).join('\n');
+  // If the last removed line was the final line of the file (no trailing
+  // newline after it), we still join with '\n' which is slightly high by one
+  // only when the original file ended mid-line; for typical `.md` files that
+  // always end with `\n`, this is exact.
+  const removedLen = Buffer.byteLength(removedText, 'utf-8');
+
   lines.splice(contentStart, endIdx - contentStart, content);
-  return { next: lines.join('\n'), at: lineOffset(lines, contentStart), len: content.length };
+  return {
+    next: lines.join('\n'),
+    at: lineOffset(lines, contentStart),
+    len: content.length,
+    removedLen,
+  };
 }
 
 function patchFrontmatter(s: string, key: string, value: unknown): Apply {
@@ -227,7 +279,10 @@ function patchFrontmatter(s: string, key: string, value: unknown): Apply {
   else data[key] = value;
   const next = matter.stringify(parsed.content, data);
   const at = Math.max(0, next.indexOf(`${key}:`));
-  return { next, at, len: String(value ?? '').length };
+  // Frontmatter rewrites round-trip through gray-matter so `removedLen` isn't
+  // meaningfully defined (the YAML block may be completely re-serialised).
+  // Reporting 0 keeps the shape valid without lying about byte counts.
+  return { next, at, len: String(value ?? '').length, removedLen: 0 };
 }
 
 function atLine(
@@ -242,13 +297,29 @@ function atLine(
   }
   const idx = line - 1;
   if (op === 'replace') {
+    const removedLen = Buffer.byteLength(lines[idx] ?? '', 'utf-8');
     lines[idx] = content;
-    return { next: lines.join('\n'), at: lineOffset(lines, idx), len: content.length };
+    return {
+      next: lines.join('\n'),
+      at: lineOffset(lines, idx),
+      len: content.length,
+      removedLen,
+    };
   }
   if (op === 'before') {
     lines.splice(idx, 0, content);
-    return { next: lines.join('\n'), at: lineOffset(lines, idx), len: content.length };
+    return {
+      next: lines.join('\n'),
+      at: lineOffset(lines, idx),
+      len: content.length,
+      removedLen: 0,
+    };
   }
   lines.splice(idx + 1, 0, content);
-  return { next: lines.join('\n'), at: lineOffset(lines, idx + 1), len: content.length };
+  return {
+    next: lines.join('\n'),
+    at: lineOffset(lines, idx + 1),
+    len: content.length,
+    removedLen: 0,
+  };
 }

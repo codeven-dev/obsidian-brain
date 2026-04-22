@@ -52,12 +52,24 @@ export function registerEditNoteTool(server: McpServer, ctx: ServerContext): voi
       const editMode = buildEditMode(args);
       const result = await editNote(ctx.config.vaultPath, first.nodeId, editMode);
 
-      const payload = {
+      const payload: {
+        path: string;
+        mode: string;
+        diff: { before: string; after: string };
+        bytesWritten: number;
+        removedLen?: number;
+      } = {
         path: result.path,
         mode: args.mode,
         diff: result.diff,
         bytesWritten: result.bytesWritten,
       };
+      // Surface `removedLen` on replace-oriented modes so callers can detect
+      // greedy consumption (specifically the default `patch_heading`
+      // `scope: 'section'` eating to EOF on the last heading).
+      if (args.mode === 'patch_heading') {
+        payload.removedLen = result.removedLen;
+      }
 
       try {
         await ctx.ensureEmbedderReady();

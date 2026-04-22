@@ -11,7 +11,7 @@ export function registerCreateNoteTool(server: McpServer, ctx: ServerContext): v
   registerTool(
     server,
     'create_note',
-    'Create a new note in the vault with a title, body, and optional YAML frontmatter. The new note is indexed immediately so semantic search and graph tools can find it.',
+    'Create a new note in the vault with a title, body, and optional YAML frontmatter. The new note is indexed immediately so semantic search and graph tools can find it. Auto-injects a `title:` field into frontmatter matching the note title unless frontmatter already has one.',
     {
       title: z.string().min(1),
       content: z.string(),
