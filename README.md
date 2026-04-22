@@ -23,7 +23,7 @@ Wire obsidian-brain into your MCP client. Example for **Claude Desktop** (`~/Lib
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -32,14 +32,17 @@ Wire obsidian-brain into your MCP client. Example for **Claude Desktop** (`~/Lib
 
 Quit Claude Desktop (⌘Q) and relaunch. For other clients — Claude Code, Cursor, VS Code, Jan, Cline, Zed, LM Studio, Opencode, Gemini CLI, Warp, JetBrains AI, Codex CLI, Windsurf — see [Install in your MCP client](#install-in-your-mcp-client).
 
+> [!TIP]
+> The `@latest` tag on `obsidian-brain@latest` makes npx re-resolve the newest published version on every launch. Every future release auto-picks-up after a client restart — no manual upgrade needed. Drop the `@latest` (or pin to a specific version like `obsidian-brain@1.5.5`) if you'd rather cache a known-good version and update on your own schedule.
+
 > [!NOTE]
 > On first boot the server **auto-indexes your vault** and downloads a ~34 MB embedding model (the v1.5.2 default `Xenova/bge-small-en-v1.5`). Tools may take 30–60 s to appear in the client. Subsequent boots are instant.
 
 Verify from the shell (optional):
 
 ```bash
-npx -y obsidian-brain --help
-VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain search "some query"
+npx -y obsidian-brain@latest --help
+VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain@latest search "some query"
 ```
 
 > [!TIP]
@@ -152,7 +155,7 @@ Or from the app: **Settings → Developer → Edit Config**. Add under `mcpServe
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -171,7 +174,7 @@ Fully quit Claude Desktop (⌘Q on macOS) and relaunch. If it can't find `npx`, 
 ```bash
 claude mcp add --scope user --transport stdio obsidian-brain \
   -e VAULT_PATH="$HOME/path/to/your/vault" \
-  -- npx -y obsidian-brain server
+  -- npx -y obsidian-brain@latest server
 ```
 
 All flags (`--scope`, `--transport`, `-e`) come before the server name. `--` separates the name from the launch command. To raise the startup timeout for the first-boot auto-index, prefix the `claude` CLI with `MCP_TIMEOUT=60000`. [Claude Code MCP docs](https://code.claude.com/docs/en/mcp).
@@ -190,7 +193,7 @@ Fastest: **Cursor Settings → MCP → Add new MCP server**. Or edit `~/.cursor/
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -209,7 +212,7 @@ Reload Cursor; the server appears under Settings → MCP with its 16 tools. [Cur
 VS Code 1.102+ with Copilot. CLI:
 
 ```bash
-code --add-mcp '{"name":"obsidian-brain","command":"npx","args":["-y","obsidian-brain","server"],"env":{"VAULT_PATH":"/absolute/path/to/your/vault"}}'
+code --add-mcp '{"name":"obsidian-brain","command":"npx","args":["-y","obsidian-brain@latest","server"],"env":{"VAULT_PATH":"/absolute/path/to/your/vault"}}'
 ```
 
 Or create `.vscode/mcp.json` in your workspace (note: top-level key is `servers`, with `type: "stdio"`):
@@ -220,7 +223,7 @@ Or create `.vscode/mcp.json` in your workspace (note: top-level key is `servers`
     "obsidian-brain": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -243,7 +246,7 @@ Cascade → **MCP** icon (top right) → **Manage MCPs** → **View raw config**
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -268,7 +271,7 @@ Equivalent JSON (Jan writes this itself under `~/Library/Application Support/Jan
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -291,7 +294,7 @@ Click the MCP Servers icon in Cline's nav bar → **Installed** → **Configure 
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" },
       "disabled": false,
       "autoApprove": []
@@ -300,7 +303,7 @@ Click the MCP Servers icon in Cline's nav bar → **Installed** → **Configure 
 }
 ```
 
-On Windows, swap to `"command": "cmd"`, `"args": ["/c", "npx", "-y", "obsidian-brain", "server"]` so `npx.cmd` is resolved. [Cline MCP docs](https://docs.cline.bot/mcp/configuring-mcp-servers).
+On Windows, swap to `"command": "cmd"`, `"args": ["/c", "npx", "-y", "obsidian-brain@latest", "server"]` so `npx.cmd` is resolved. [Cline MCP docs](https://docs.cline.bot/mcp/configuring-mcp-servers).
 
 </details>
 
@@ -317,7 +320,7 @@ Agent Panel → settings gear → **Add Custom Server**, or edit `~/.config/zed/
     "obsidian-brain": {
       "source": "custom",
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -340,7 +343,7 @@ Right sidebar → **Program** tab → **Install** → **Edit mcp.json** (`~/.lms
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -363,7 +366,7 @@ IntelliJ / PyCharm / WebStorm 2025.1+ with AI Assistant 251.26094.80.5+. **Setti
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
@@ -387,7 +390,7 @@ Add to `opencode.json` (project root) or `~/.config/opencode/opencode.json` (glo
   "mcp": {
     "obsidian-brain": {
       "type": "local",
-      "command": ["npx", "-y", "obsidian-brain", "server"],
+      "command": ["npx", "-y", "obsidian-brain@latest", "server"],
       "enabled": true,
       "environment": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
@@ -405,7 +408,7 @@ Add to `opencode.json` (project root) or `~/.config/opencode/opencode.json` (glo
 <p></p>
 
 ```bash
-codex mcp add obsidian-brain --env VAULT_PATH="$HOME/path/to/your/vault" -- npx -y obsidian-brain server
+codex mcp add obsidian-brain --env VAULT_PATH="$HOME/path/to/your/vault" -- npx -y obsidian-brain@latest server
 ```
 
 Then bump the startup timeout in `~/.codex/config.toml` — the default 10 s is too short for first-boot auto-indexing:
@@ -413,7 +416,7 @@ Then bump the startup timeout in `~/.codex/config.toml` — the default 10 s is 
 ```toml
 [mcp_servers.obsidian-brain]
 command = "npx"
-args = ["-y", "obsidian-brain", "server"]
+args = ["-y", "obsidian-brain@latest", "server"]
 startup_timeout_sec = 60
 
 [mcp_servers.obsidian-brain.env]
@@ -436,7 +439,7 @@ No `mcp add` subcommand — edit `~/.gemini/settings.json` and merge into `mcpSe
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "$HOME/path/to/your/vault" },
       "timeout": 60000
     }
@@ -459,7 +462,7 @@ Gemini expands `$VAR` inside the `env` block; `timeout` is in milliseconds. [Gem
 {
   "obsidian-brain": {
     "command": "npx",
-    "args": ["-y", "obsidian-brain", "server"],
+    "args": ["-y", "obsidian-brain@latest", "server"],
     "env": { "VAULT_PATH": "/absolute/path/to/your/vault" },
     "working_directory": null
   }
@@ -480,14 +483,14 @@ The common shape across almost every client is:
 ```json
 {
   "command": "npx",
-  "args": ["-y", "obsidian-brain", "server"],
+  "args": ["-y", "obsidian-brain@latest", "server"],
   "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
 }
 ```
 
 Wrap it in whatever top-level key your client expects (`mcpServers`, `servers`, `mcp`, `context_servers`, etc.). No API key, no remote URL, no auth header — none of that applies to a local stdio server.
 
-On Windows, if `npx` isn't found, swap `"command": "npx"` for `"command": "cmd"` and prepend `/c` to the args: `["/c", "npx", "-y", "obsidian-brain", "server"]`.
+On Windows, if `npx` isn't found, swap `"command": "npx"` for `"command": "cmd"` and prepend `/c` to the args: `["/c", "npx", "-y", "obsidian-brain@latest", "server"]`.
 
 </details>
 
@@ -552,7 +555,7 @@ Example MCP client config with a preset:
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": {
         "VAULT_PATH": "/absolute/path/to/your/vault",
         "EMBEDDING_PRESET": "multilingual"

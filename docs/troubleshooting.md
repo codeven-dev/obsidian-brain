@@ -84,7 +84,7 @@ Then re-run the rebuild command above. To avoid this happening again, prefer the
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": {
         "VAULT_PATH": "/absolute/path/to/vault"
       }

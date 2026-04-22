@@ -16,7 +16,7 @@ Wire obsidian-brain into your MCP client. Example for **Claude Desktop** (`~/Lib
   "mcpServers": {
     "obsidian-brain": {
       "command": "npx",
-      "args": ["-y", "obsidian-brain", "server"],
+      "args": ["-y", "obsidian-brain@latest", "server"],
       "env": { "VAULT_PATH": "/absolute/path/to/your/vault" }
     }
   }
