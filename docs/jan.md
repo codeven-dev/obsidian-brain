@@ -22,7 +22,7 @@ Then in [Jan](https://jan.ai):
    - **Command**: the absolute path from `which obsidian-brain` (typically `/opt/homebrew/bin/obsidian-brain` on macOS Homebrew, `/usr/bin/obsidian-brain` or an nvm-scoped path on Linux). Use an absolute path, **not** a bare `obsidian-brain`. Jan spawns subprocesses with a minimal `PATH` that usually doesn't include your shell's install.
    - **Arguments**: `server`
    - **Environment variables**: `VAULT_PATH=/absolute/path/to/your/vault`
-3. Save and enable the server. Jan will spawn the process and send `initialize` followed by `tools/list`. First boot auto-indexes the vault (30–60 s while the ~34 MB embedding model downloads — the v1.5.2 default `bge-small-en-v1.5`). Once the index is built you should see the 16 obsidian-brain tools appear in the MCP panel.
+3. Save and enable the server. Jan will spawn the process and send `initialize` followed by `tools/list`. First boot auto-indexes the vault (30–60 s while the ~34 MB embedding model downloads — the v1.5.2 default `bge-small-en-v1.5`). Once the index is built you should see the 17 obsidian-brain tools appear in the MCP panel.
 
 ### Alternative: npx (no global install)
 
@@ -65,7 +65,7 @@ Start a new chat in Jan and ask:
 
 > List my obsidian-brain tools.
 
-The assistant should respond naming all 16 tools:
+The assistant should respond naming all 17 tools:
 
 - `search`
 - `read_note`
@@ -76,6 +76,7 @@ The assistant should respond naming all 16 tools:
 - `rank_notes`
 - `create_note`
 - `edit_note`
+- `apply_edit_preview`
 - `link_notes`
 - `move_note`
 - `delete_note`

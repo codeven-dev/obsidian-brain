@@ -1,11 +1,11 @@
 ---
 title: Tool reference
-description: All 16 obsidian-brain MCP tools, grouped by intent, with arguments and usage prompts.
+description: All 17 obsidian-brain MCP tools, grouped by intent, with arguments and usage prompts.
 ---
 
 # Tool reference
 
-16 tools, grouped by intent. Every tool description below includes a one-line Claude prompt you can copy-paste into chat to nudge routing in the right direction.
+17 tools, grouped by intent. Every tool description below includes a one-line Claude prompt you can copy-paste into chat to nudge routing in the right direction.
 
 Tools marked **requires companion plugin** only work when the [companion Obsidian plugin](plugin.md) is installed and Obsidian is running. Every other tool works standalone against the vault on disk.
 
@@ -23,6 +23,8 @@ Find notes by meaning (chunk-level semantic similarity) or by exact text (SQLite
 | `unique` | `"notes"` \| `"chunks"` | Default `"notes"` (one row per note, best chunk's score wins). Set `"chunks"` for raw chunk rows including `chunkHeading`, `chunkStartLine`, `chunkExcerpt`. |
 
 The response is wrapped as `{data, context}` since v1.5.0 — `context.next_actions` suggests the most useful follow-up call (e.g. `read_note(top hit)`, `find_connections(top-3)`, or a simplified query retry on zero hits). Clients that ignore `context` keep working.
+
+`mode: 'hybrid' + unique: 'chunks'` returns chunk metadata since v1.5.8 (previously only `semantic + chunks` did). FTS5 queries containing `-`, `:`, `/`, or parens are auto-phrase-quoted since v1.5.8 — a query like `foo-bar-baz` no longer crashes.
 
 > *"Use `search` to find notes semantically about supply-chain tax."*
 
@@ -122,6 +124,8 @@ Create a new note with frontmatter and auto-index it. `title:` is auto-injected 
 | `frontmatter` | object | YAML frontmatter key/value map. |
 | `tags` | string[] | Convenience: tags written into `frontmatter.tags`. |
 
+Since v1.5.8, creating a note that matches an existing `[[ForwardRef]]` stub automatically repoints the stub's inbound edges to the real note and deletes the stub.
+
 > *"Use `create_note` to create `Meetings/2026-04-21 standup.md` with tags `[meeting, standup]`."*
 
 ### `edit_note`
@@ -144,7 +148,25 @@ Modify an existing note. Six modes: `append`, `prepend`, `replace_window` (find-
 
 `patch_heading` responses include `removedLen` so callers can detect greedy trailing-heading consumption (v1.4.0).
 
+- `dryRun: true` → returns a unified diff + `previewId`; no file is mutated. Commit the preview with `apply_edit_preview({ previewId })`.
+- `edits: [...]` — bulk edit array applied atomically on a single file. All or nothing; error names the failing index if any edit fails.
+- `fuzzyThreshold: 0–1` on `replace_window` (default `0.7`). Higher = stricter match required.
+- `from_buffer: true` — on `replace_window` NoMatch, the proposed content is held in a buffer; retry via `from_buffer: true` retries with `fuzzy: true, fuzzyThreshold: 0.5`.
+
 > *"Use `edit_note` to append a 'Follow-ups' section to today's standup note."*
+
+### `apply_edit_preview`
+
+Commit an edit previewed via `edit_note({ dryRun: true })`.
+
+```
+apply_edit_preview({ previewId: "prev_..." })
+```
+
+- Preview not found or expired (5 min TTL) → error; regenerate the preview.
+- Target file changed since preview was generated → error; regenerate the preview.
+
+Added in v1.6.0.
 
 ### `link_notes`
 
@@ -156,6 +178,8 @@ Add a wiki-link between two notes plus a "why this connects" context sentence pl
 | `to` | string | Target note. |
 | `context` | string | One-sentence explanation. |
 | `section` | string | Heading under which to insert. Default `## Related`. |
+
+`dryRun: true` (v1.6.0) returns the line that would be appended without writing.
 
 > *"Use `link_notes` to link `Bayesian updating` to `Kelly criterion` with a note about risk-adjusted bets."*
 
@@ -170,6 +194,8 @@ Rename or move a note. Since v1.5.0, all inbound wiki-links (`[[old]]`, `[[old|a
 
 Response adds `linksRewritten: {files, occurrences}` counting the rewrites applied (v1.5.0).
 
+`dryRun: true` (v1.6.0) reports what would be rewritten without mutating. Response on a real move includes `stubsPruned: N` (v1.5.8).
+
 > *"Use `move_note` with `source: 'Inbox/thought.md'` and `destination: 'Areas/Ideas/thought.md'`."*
 
 ### `delete_note`
@@ -182,6 +208,8 @@ Delete a note. Requires `confirm: true` as a Zod-level guard.
 | `confirm` | `true` | Must literally be `true` to execute. |
 
 When the delete removed inbound edges, the response is wrapped in a `{data, context: {next_actions}}` envelope suggesting `rank_notes({metric: 'influence', minIncomingLinks: 0})` as a follow-up to surface newly orphaned notes (v1.5.0). v1.4.0 also fixed the theme-cache correctness bug — deletes now prune the node id from every community row and regenerate the cluster `summary` on write.
+
+`dryRun: true` (v1.6.0) reports what would be deleted. Real deletes surface `deletedFromIndex.stubsPruned: N` (v1.5.8) when the deleted note's orphan-stub targets were cleaned up.
 
 > *"Use `delete_note` with `confirm: true` to delete `Inbox/obsolete.md`."*
 
@@ -253,6 +281,8 @@ Force a full re-index. You rarely need this — the live watcher picks up file c
 |---|---|---|
 | `resolution` | number | Louvain resolution. Default `1.0` (equal-weight clusters). `0.5` = fewer/broader; `2.0` = more/finer. |
 
+Response includes `stubsPruned: N` (v1.5.8) — primarily as the migration path for users upgrading from older versions with orphan stubs already in their DB.
+
 > *"Use `reindex` to refresh the index after I bulk-edited files outside Claude."*
 
 ---
@@ -270,6 +300,7 @@ Force a full re-index. You rarely need this — the live watcher picks up file c
 | `rank_notes` | ✅ | — | — |
 | `create_note` | ✅ | — | ✅ |
 | `edit_note` | ✅ | — | ✅ |
+| `apply_edit_preview` | ✅ | — | ✅ |
 | `link_notes` | ✅ | — | ✅ |
 | `move_note` | ✅ | — | ✅ |
 | `delete_note` | ✅ | — | ✅ |

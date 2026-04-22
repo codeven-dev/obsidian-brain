@@ -56,7 +56,7 @@ All configuration is via environment variables. Only `VAULT_PATH` is required.
 
 ## Next steps
 
-- Browse the [tool reference](tools.md) — 16 tools grouped by intent.
+- Browse the [tool reference](tools.md) — 17 tools grouped by intent.
 - Install the optional [companion plugin](plugin.md) to unlock `active_note`, `dataview_query`, and `base_query`.
 - Read [Architecture](architecture.md) for *why* stdio, SQLite, and local embeddings.
 - If something goes wrong: [Troubleshooting](troubleshooting.md).

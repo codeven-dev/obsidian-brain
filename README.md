@@ -50,10 +50,16 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain@latest search "some query
 
 ## Tool reference
 
-16 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction. Tools marked *requires companion plugin* only work when the [companion Obsidian plugin](docs/plugin.md) is installed and Obsidian is running.
+17 tools, grouped by intent. Each tool includes a one-line Claude prompt you can copy-paste to nudge routing in the right direction. Tools marked *requires companion plugin* only work when the [companion Obsidian plugin](docs/plugin.md) is installed and Obsidian is running.
 
 > [!TIP]
 > **v1.4.0** made semantic search chunk-level and introduced **hybrid retrieval as the default** for `search` — RRF-fused semantic + full-text ranks, no `mode` param required. `search` also accepts `unique: 'chunks'` to see raw chunk-level rows with `chunkHeading`/`chunkStartLine`/`chunkExcerpt`. Embedding is configurable via `EMBEDDING_MODEL` and auto-reindexes on model change — see [Embedding model](#embedding-model).
+
+> [!TIP]
+> **v1.6.0** adds the **agentic-writes safety bundle** — `edit_note({ dryRun: true })` returns a unified-diff preview + `previewId`; the new `apply_edit_preview(previewId)` tool commits it (file-drift-guarded, 5 min TTL). `edit_note({ edits: [...] })` applies bulk edits atomically (all-or-nothing). `fuzzyThreshold` parameter on `replace_window` (default 0.7). `edit_note({ from_buffer: true })` recovers a failed `replace_window` with a relaxed fuzzy retry. `move_note` / `delete_note` / `link_notes` also accept `dryRun: true`.
+
+> [!TIP]
+> **v1.5.8** fixes stub-lifecycle bugs (`move_note` / `delete_note` no longer orphan stubs; forward-refs `[[X]]` upgrade when `X.md` is later created), a FTS5 crash on hyphenated queries (`no such column: hyphen`), and makes `search({mode:'hybrid', unique:'chunks'})` return chunk metadata the way `semantic+chunks` already did.
 
 > [!TIP]
 > **v1.5.0** adds an Ollama embedding provider (`EMBEDDING_PROVIDER=ollama`, see [Alternative provider: Ollama](#alternative-provider-ollama)), opt-in `next_actions` envelope hints on `search` / `read_note` / `find_connections` / `delete_note` (`{data, context: {next_actions}}` — clients that ignore `context` keep working), inbound wiki-link rewriting on `move_note` (returns `linksRewritten: {files, occurrences}`), explicit `headingIndex` disambiguation on `edit_note`'s `patch_heading`, `truncated` signal on `read_note` full-mode, `includeStubs` on `detect_themes` + `rank_notes`, and graph-analytics credibility guards (PageRank excludes nodes with `< 2` incoming links by default; low-modularity `detect_themes` result warns; `bridging` scores normalized 0–1).
@@ -63,7 +69,7 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain@latest search "some query
 
 ### Find stuff
 
-- **`search`** — Find notes by meaning + exact text. Default `mode: 'hybrid'` fuses chunk-level semantic and FTS5 full-text rankings via Reciprocal Rank Fusion; pass `mode: 'semantic'` or `mode: 'fulltext'` to force one. Default `unique: 'notes'` returns one row per note (best chunk wins); set `unique: 'chunks'` for chunk-level rows with `chunkHeading`/`chunkStartLine`/`chunkExcerpt`. v1.5.0 wraps the response as `{data, context}` with a `context.next_actions` hint for the top hit / zero-result retry / connections follow-up — clients that ignore `context` keep working.
+- **`search`** — Find notes by meaning + exact text. Default `mode: 'hybrid'` fuses chunk-level semantic and FTS5 full-text rankings via Reciprocal Rank Fusion; pass `mode: 'semantic'` or `mode: 'fulltext'` to force one. Default `unique: 'notes'` returns one row per note (best chunk wins); set `unique: 'chunks'` for chunk-level rows with `chunkHeading`/`chunkStartLine`/`chunkExcerpt`. Since v1.5.8, `mode: 'hybrid' + unique: 'chunks'` also returns chunk metadata (previously only `semantic + chunks` did); v1.5.8 also fixes a FTS5 crash on hyphenated query terms (`no such column: hyphen`). v1.5.0 wraps the response as `{data, context}` with a `context.next_actions` hint for the top hit / zero-result retry / connections follow-up — clients that ignore `context` keep working.
   > *"Use `search` to find notes semantically about supply-chain tax."*
 - **`list_notes`** — List notes, optionally filtered by directory or tag.
   > *"Use `list_notes` to list every note under `Projects/` tagged `#active`."*
@@ -85,13 +91,15 @@ VAULT_PATH="$HOME/path/to/vault" npx -y obsidian-brain@latest search "some query
 
 - **`create_note`** — Create a new note with frontmatter and auto-index it.
   > *"Use `create_note` to create `Meetings/2026-04-21 standup.md` with tags `[meeting, standup]`."*
-- **`edit_note`** — Modify an existing note. Six modes: `append`, `prepend`, `replace_window`, `patch_heading`, `patch_frontmatter`, `at_line`. Since v1.5.0, `patch_heading` throws `MultipleMatchesError` with per-occurrence line numbers when more than one heading matches; disambiguate with `headingIndex: N` (0-indexed appearance order).
+- **`edit_note`** — Modify an existing note. Six modes: `append`, `prepend`, `replace_window`, `patch_heading`, `patch_frontmatter`, `at_line`. Since v1.5.0, `patch_heading` throws `MultipleMatchesError` with per-occurrence line numbers when more than one heading matches; disambiguate with `headingIndex: N` (0-indexed appearance order). Since v1.6.0: `dryRun: true` returns a unified-diff + `previewId` instead of writing — commit via `apply_edit_preview(previewId)`. `edits: [...]` accepts a bulk-edit array; all edits apply atomically (error names the failing index on rollback). `fuzzyThreshold: 0.0–1.0` tunes match tolerance on `replace_window` (default 0.7). `from_buffer: true` retries a prior `replace_window` `NoMatch` failure with `fuzzy: true, fuzzyThreshold: 0.5`.
   > *"Use `edit_note` to append a 'Follow-ups' section to today's standup note."*
-- **`link_notes`** — Add a wiki-link between two notes plus a "why this connects" context sentence.
+- **`apply_edit_preview`** — Commit a preview returned by `edit_note({ dryRun: true })`. Pass the `previewId`. Fails with a descriptive error if the target file changed between preview and apply (re-run `edit_note` with `dryRun: true` to regenerate). Previews expire after 5 minutes.
+  > *"Use `apply_edit_preview` with the `previewId` from the last `edit_note` dry-run to commit the change."*
+- **`link_notes`** — Add a wiki-link between two notes plus a "why this connects" context sentence. Since v1.6.0, `dryRun: true` returns a preview of the link that would be inserted without mutating anything.
   > *"Use `link_notes` to link `Bayesian updating` to `Kelly criterion` with a note about risk-adjusted bets."*
-- **`move_note`** — Rename or move a note. Since v1.5.0, inbound wiki-links (`[[old]]`, `[[old|alias]]`, `![[old]]`, `[[old#heading]]`, `[[old^block]]`) are rewritten in place across the vault; the response includes `linksRewritten: {files, occurrences}`.
+- **`move_note`** — Rename or move a note. Since v1.5.0, inbound wiki-links (`[[old]]`, `[[old|alias]]`, `![[old]]`, `[[old#heading]]`, `[[old^block]]`) are rewritten in place across the vault; the response includes `linksRewritten: {files, occurrences}`. Since v1.5.8, old stubs orphaned by the rename are pruned automatically (response includes `stubsPruned: N`). Since v1.6.0, `dryRun: true` returns a preview of what links would be rewritten without mutating anything.
   > *"Use `move_note` to move `Inbox/thought.md` into `Areas/Ideas/thought.md`."*
-- **`delete_note`** — Delete a note; requires `confirm: true`.
+- **`delete_note`** — Delete a note; requires `confirm: true`. Since v1.5.8, stubs whose last referencer was this note are pruned (`deletedFromIndex.stubsPruned`). Since v1.6.0, `dryRun: true` returns a preview of what would be deleted without mutating anything.
   > *"Use `delete_note` with `confirm: true` to delete `Inbox/obsolete.md`."*
 
 ### Live editor (requires [companion plugin](docs/plugin.md))
@@ -200,7 +208,7 @@ Fastest: **Cursor Settings → MCP → Add new MCP server**. Or edit `~/.cursor/
 }
 ```
 
-Reload Cursor; the server appears under Settings → MCP with its 16 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
+Reload Cursor; the server appears under Settings → MCP with its 17 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
 
 </details>
 
@@ -753,7 +761,7 @@ Details, security model, troubleshooting: [`docs/plugin.md`](docs/plugin.md).
 | **Live-workspace / active-editor awareness** | Requires a signal from inside Obsidian. | **Shipped** in v1.2.0 as `active_note` via the [companion plugin](docs/plugin.md). |
 | **Cloud embeddings (OpenAI / Voyage / Cohere)** | Deliberate: fully local, zero API calls, zero egress, works offline. | If you want cloud embeddings, the `Embedder` class is easy to fork — but it's not a config knob. |
 
-Full forward-looking plan: [`docs/roadmap.md`](docs/roadmap.md) — v1.4.x Bases subset rollout (arithmetic / formulas / summaries), v1.6.0 agentic writes safety bundle (`dryRun`, bulk `edit_note`, fuzzy window edits), v1.7.0 block-ref editing + FTS5 tuning, v2.0 daemon mode + community registry submission, and explicit "not planned" stances.
+Full forward-looking plan: [`docs/roadmap.md`](docs/roadmap.md) — v1.4.x Bases subset rollout (arithmetic / formulas / summaries), v1.5.8 stub-lifecycle + FTS5 + hybrid chunks (shipped), v1.6.0 agentic-writes safety bundle (shipped), v1.7.0 block-ref editing + FTS5 frontmatter fielding + topic-aware PageRank, v2.0 daemon mode + community registry submission, and explicit "not planned" stances.
 
 ## Credits
 

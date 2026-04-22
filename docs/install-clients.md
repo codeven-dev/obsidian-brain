@@ -66,7 +66,7 @@ No system-level prerequisites beyond Node 20+. `npm install` bundles every nativ
     }
     ```
 
-    Reload Cursor; the server appears under Settings → MCP with its 16 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
+    Reload Cursor; the server appears under Settings → MCP with its 17 tools. [Cursor MCP docs](https://cursor.com/docs/context/mcp).
 
 ??? info "VS Code (GitHub Copilot)"
 
@@ -300,7 +300,7 @@ No system-level prerequisites beyond Node 20+. `npm install` bundles every nativ
 
 ## Verifying the connection
 
-Once your client restarts, obsidian-brain should appear in its MCP/tool list with 16 tools. Try:
+Once your client restarts, obsidian-brain should appear in its MCP/tool list with 17 tools. Try:
 
 > *"Use `search` to find notes about the most recent thing I wrote."*
 
