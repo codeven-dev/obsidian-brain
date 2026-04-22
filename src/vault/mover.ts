@@ -5,8 +5,10 @@
  * `ObsidianAPI` (`renameFile`, `deleteFile`). The aaronsb version relies on
  * `app.vault.rename` / `app.fileManager.trashFile`, which handle link-
  * rewriting and trash semantics for free. This standalone implementation
- * uses plain `fs` calls and delegates link fix-up to the pipeline's
- * re-index pass (triggered by the tool layer in Phase 4).
+ * uses plain `fs` calls; inbound wiki-link rewriting on move is driven
+ * eagerly by the `move_note` tool layer (`src/tools/move-note.ts`) using
+ * the edge store + `rewriteWikiLinks` — this function itself only touches
+ * the file being moved.
  */
 
 import { promises as fs } from 'fs';

@@ -3,6 +3,7 @@ import {
   extractWikiLinks,
   buildStemLookup,
   resolveLink,
+  rewriteWikiLinks,
 } from '../../src/vault/wiki-links.js';
 
 describe('extractWikiLinks', () => {
@@ -77,5 +78,104 @@ describe('resolveLink', () => {
 
   it('returns null for unresolvable links (stub nodes)', () => {
     expect(resolveLink('Nonexistent Page', lookup)).toBeNull();
+  });
+});
+
+describe('rewriteWikiLinks', () => {
+  it('rewrites a bare [[old]] link', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'See [[old]] for details.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('See [[new]] for details.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('preserves the display alias in [[old|display]]', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'The [[old|widget framework]] works.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('The [[new|widget framework]] works.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('preserves the ! prefix for embeds ![[old]]', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Embed: ![[old]] end.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Embed: ![[new]] end.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('preserves a #heading suffix', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Jump to [[old#Intro]].',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Jump to [[new#Intro]].');
+    expect(occurrences).toBe(1);
+  });
+
+  it('preserves a ^block suffix', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Block ref [[old^abc123]] here.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Block ref [[new^abc123]] here.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('leaves non-matching links untouched', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Mentions [[other]] and [[another]].',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Mentions [[other]] and [[another]].');
+    expect(occurrences).toBe(0);
+  });
+
+  it('counts every occurrence in mixed content', () => {
+    const input =
+      'First [[old]], then ![[old]], and [[old|alias]] plus [[other]].';
+    const { text, occurrences } = rewriteWikiLinks(input, 'old', 'new');
+    expect(text).toBe(
+      'First [[new]], then ![[new]], and [[new|alias]] plus [[other]].',
+    );
+    expect(occurrences).toBe(3);
+  });
+
+  it('handles empty input', () => {
+    expect(rewriteWikiLinks('', 'old', 'new')).toEqual({
+      text: '',
+      occurrences: 0,
+    });
+  });
+
+  it('does not rewrite a link whose stem only contains oldStem as a substring', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Mention [[old-notes]] here.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Mention [[old-notes]] here.');
+    expect(occurrences).toBe(0);
+  });
+
+  it('trims whitespace around the stem when matching', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Padded [[ old ]] link.',
+      'old',
+      'new',
+    );
+    expect(text).toBe('Padded [[new]] link.');
+    expect(occurrences).toBe(1);
   });
 });

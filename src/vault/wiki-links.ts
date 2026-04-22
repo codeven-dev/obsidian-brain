@@ -47,6 +47,36 @@ export function buildStemLookup(allPaths: string[]): Map<string, string[]> {
 }
 
 /**
+ * Rewrite every wiki-link whose stem matches `oldStem` to point at `newStem`.
+ *
+ * Handles the four forms Obsidian emits:
+ *   - `[[old]]`           → `[[new]]`
+ *   - `[[old|display]]`   → `[[new|display]]` (alias preserved)
+ *   - `![[old]]`          → `![[new]]`        (embed preserved)
+ *   - `[[old#heading]]`   → `[[new#heading]]` (heading/block suffix preserved)
+ *   - `[[old^block]]`     → `[[new^block]]`
+ *
+ * Stems are compared by trimmed equality — path-qualified links (`[[dir/old]]`)
+ * match only when `oldStem` was supplied path-qualified. Callers should pass
+ * basenames-without-`.md` for bare-name matching (the common case).
+ */
+export function rewriteWikiLinks(
+  markdown: string,
+  oldStem: string,
+  newStem: string,
+): { text: string; occurrences: number } {
+  let occurrences = 0;
+  // Groups: 1=optional !, 2=stem, 3=optional # or ^ suffix, 4=optional | alias.
+  const pattern = /(!?)\[\[([^\]|#^\n]+?)((?:#|\^)[^\]|\n]+)?(\|[^\]\n]*)?\]\]/g;
+  const text = markdown.replace(pattern, (full, bang, stem, suffix, alias) => {
+    if (stem.trim() !== oldStem) return full;
+    occurrences++;
+    return `${bang}[[${newStem}${suffix ?? ''}${alias ?? ''}]]`;
+  });
+  return { text, occurrences };
+}
+
+/**
  * Resolve a wiki link reference to a vault-relative path.
  * Returns null for unresolvable links (these become stub nodes).
  */
