@@ -63,5 +63,35 @@ export function betweennessCentralityTop(
     }));
 }
 
+/**
+ * Top-`limit` nodes by betweenness centrality, with raw scores normalized by
+ * the max possible number of shortest paths in an undirected graph —
+ * `n * (n - 1) / 2`. Raw betweenness scales with graph size, so unnormalized
+ * scores from different vaults aren't comparable; this division yields a
+ * value in [0, 1] that means the same thing regardless of `n`.
+ *
+ * Empty / singleton graphs return an empty list rather than dividing by zero.
+ */
+export function betweennessCentralityNormalized(
+  graph: GraphInstance,
+  limit: number,
+): Array<{ id: string; title: string; score: number }> {
+  const n = graph.order;
+  if (n < 2) return [];
+  const maxPaths = (n * (n - 1)) / 2;
+  const bc = betweennessFn(graph);
+  return Object.entries(bc)
+    .map(([id, score]) => ({ id, score: score / maxPaths }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ id, score }) => ({
+      id,
+      title: graph.hasNode(id) ? (graph.getNodeAttribute(id, 'title') as string) : id,
+      // Clamp into [0, 1] — floating-point slop can push scores a hair above 1
+      // on very small graphs where the single-pair denominator dominates.
+      score: Math.max(0, Math.min(1, score)),
+    }));
+}
+
 // Alias matching the spec name in the task description.
 export { betweennessCentralityTop as betweennessCentrality };
