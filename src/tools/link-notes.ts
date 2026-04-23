@@ -35,12 +35,13 @@ export function registerLinkNotesTool(server: McpServer, ctx: ServerContext): vo
 
       const payload = { source: sourceId, target, context };
 
-      try {
-        await ctx.ensureEmbedderReady();
-        await ctx.pipeline.index(ctx.config.vaultPath);
-      } catch (err) {
-        return { ...payload, reindex: 'failed', reindexError: String(err) };
-      }
+      // Fire-and-forget reindex: the write has already succeeded; blocking on
+      // the embedder init + index run would make this tool call wait minutes on
+      // first run, which MCP clients time out. The watcher path already accepts
+      // this eventual-consistency window; this matches.
+      void ctx.ensureEmbedderReady()
+        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
 
       return payload;
     },

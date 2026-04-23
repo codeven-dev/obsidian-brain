@@ -59,17 +59,19 @@ export function registerDeleteNoteTool(server: McpServer, ctx: ServerContext): v
 
       const result = await deleteNote(ctx.config.vaultPath, fileRelPath, ctx.db);
 
-      let payload: DeleteResult | (DeleteResult & { reindex: string; reindexError: string }) = result;
-      try {
-        await ctx.ensureEmbedderReady();
-        await ctx.pipeline.index(ctx.config.vaultPath);
-      } catch (err) {
-        payload = { ...result, reindex: 'failed', reindexError: String(err) };
-      }
+      // Fire-and-forget reindex: the write has already succeeded; blocking on
+      // the embedder init + index run would make this tool call wait minutes on
+      // first run, which MCP clients time out. The watcher path already accepts
+      // this eventual-consistency window; this matches.
+      void ctx.ensureEmbedderReady()
+        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
+
+      const payload: DeleteResult = result;
 
       const edgesRemoved = result.deletedFromIndex.edges;
       if (edgesRemoved > 0) {
-        const envelope: ContextualResult<typeof payload> = {
+        const envelope: ContextualResult<DeleteResult> = {
           data: payload,
           context: {
             next_actions: [

@@ -32,21 +32,24 @@ export function registerCreateNoteTool(server: McpServer, ctx: ServerContext): v
 
       const result = { path, title };
 
-      try {
-        await ctx.ensureEmbedderReady();
-        await ctx.pipeline.index(ctx.config.vaultPath);
-        // Migrate any forward-reference stub for this note's bare stem.
-        // e.g. if another note wrote [[NewNote]] before NewNote.md existed,
-        // a _stub/NewNote.md was created. Now that the real note is indexed,
-        // repoint all inbound edges and delete the stub.
-        const stem = basename(path, '.md');
-        if (stem) {
-          migrateStubToReal(ctx.db, `_stub/${stem}.md`, path);
-        }
-      } catch (err) {
-        return { ...result, reindex: 'failed', reindexError: String(err) };
+      // Migrate any forward-reference stub for this note's bare stem.
+      // e.g. if another note wrote [[NewNote]] before NewNote.md existed,
+      // a _stub/NewNote.md was created. Now that the real note is indexed,
+      // repoint all inbound edges and delete the stub.
+      // This is a DB mutation that must complete before the write returns so
+      // future tool calls see the correct edge state.
+      const stem = basename(path, '.md');
+      if (stem) {
+        migrateStubToReal(ctx.db, `_stub/${stem}.md`, path);
       }
 
+      // Fire-and-forget reindex: the write has already succeeded; blocking on
+      // the embedder init + index run would make this tool call wait minutes on
+      // first run, which MCP clients time out. The watcher path already accepts
+      // this eventual-consistency window; this matches.
+      void ctx.ensureEmbedderReady()
+        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
       return result;
     },
   );

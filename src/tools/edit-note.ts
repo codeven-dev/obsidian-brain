@@ -138,19 +138,13 @@ export function registerEditNoteTool(server: McpServer, ctx: ServerContext): voi
         // Normal bulk apply.
         const bulkResult = await bulkEditNote(ctx.config.vaultPath, first.nodeId, modes);
 
-        try {
-          await ctx.ensureEmbedderReady();
-          await ctx.pipeline.index(ctx.config.vaultPath);
-        } catch (err) {
-          return {
-            path: bulkResult.path,
-            mode: 'bulk',
-            editsApplied: bulkResult.editsApplied,
-            bytesWritten: bulkResult.bytesWritten,
-            reindex: 'failed',
-            reindexError: String(err),
-          };
-        }
+        // Fire-and-forget reindex: the write has already succeeded; blocking on
+        // the embedder init + index run would make this tool call wait minutes on
+        // first run, which MCP clients time out. The watcher path already accepts
+        // this eventual-consistency window; this matches.
+        void ctx.ensureEmbedderReady()
+          .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+          .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
 
         return {
           path: bulkResult.path,
@@ -265,12 +259,13 @@ export function registerEditNoteTool(server: McpServer, ctx: ServerContext): voi
         payload.removedLen = result.removedLen;
       }
 
-      try {
-        await ctx.ensureEmbedderReady();
-        await ctx.pipeline.index(ctx.config.vaultPath);
-      } catch (err) {
-        return { ...payload, reindex: 'failed', reindexError: String(err) };
-      }
+      // Fire-and-forget reindex: the write has already succeeded; blocking on
+      // the embedder init + index run would make this tool call wait minutes on
+      // first run, which MCP clients time out. The watcher path already accepts
+      // this eventual-consistency window; this matches.
+      void ctx.ensureEmbedderReady()
+        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
 
       return payload;
     },

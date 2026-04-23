@@ -139,18 +139,13 @@ export function registerMoveNoteTool(server: McpServer, ctx: ServerContext): voi
       );
       const stubsPruned = pruneOrphanStubs(ctx.db, stubCandidates);
 
-      try {
-        await ctx.ensureEmbedderReady();
-        await ctx.pipeline.index(ctx.config.vaultPath);
-      } catch (err) {
-        return {
-          ...result,
-          linksRewritten: { files: linksRewritten.files, occurrences: linksRewritten.occurrences },
-          stubsPruned,
-          reindex: 'failed',
-          reindexError: String(err),
-        };
-      }
+      // Fire-and-forget reindex: the write has already succeeded; blocking on
+      // the embedder init + index run would make this tool call wait minutes on
+      // first run, which MCP clients time out. The watcher path already accepts
+      // this eventual-consistency window; this matches.
+      void ctx.ensureEmbedderReady()
+        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
+        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
 
       return {
         ...result,

@@ -189,7 +189,10 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
         content: 'See [[BMW]] for details.',
       });
 
-      // edit_note reindexes internally; the new edge should be visible.
+      // edit_note now fires the reindex in the background (fire-and-forget).
+      // Simulate the background reindex completing to verify eventual consistency.
+      await pipeline.index(vault);
+
       const inbound = getEdgesByTarget(db, 'BMW.md');
       expect(inbound.some((e) => e.sourceId === 'Cars.md')).toBe(true);
 
@@ -230,7 +233,10 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       const applied = unwrap(await applyTool.cb({ previewId: preview.previewId }));
       expect(applied.path).toBe('Notes.md');
 
-      // The committed edit reindexes internally — edge to Target should exist.
+      // apply_edit_preview now fires the reindex in the background (fire-and-forget).
+      // Simulate the background reindex completing to verify eventual consistency.
+      await pipeline.index(vault);
+
       const inbound = getEdgesByTarget(db, 'Target.md');
       expect(inbound.some((e) => e.sourceId === 'Notes.md')).toBe(true);
 
