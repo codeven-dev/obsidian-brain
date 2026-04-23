@@ -257,7 +257,7 @@ describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', 
     if (tmpVault) rmSync(tmpVault, { recursive: true, force: true });
   });
 
-  it('splits [[BMW#Specs]] into bare stub + target_fragment="Specs"', async () => {
+  it('splits [[BMW#Specs]] into bare stub + target_subpath="Specs"', async () => {
     writeFileSync(join(tmpVault, 'Cars.md'), '# Cars\n\nI drive a [[BMW#Specs]] model.\n');
     await pipeline.index(tmpVault);
 
@@ -268,7 +268,7 @@ describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', 
     const edges = getEdgesBySource(db, 'Cars.md');
     const edge = edges.find((e) => e.targetId === '_stub/BMW.md');
     expect(edge).toBeDefined();
-    expect(edge?.targetFragment).toBe('Specs');
+    expect(edge?.targetSubpath).toBe('Specs');
   }, 120_000);
 
   it('migrates the fragment stub to a real note when the target is created', async () => {
@@ -280,7 +280,7 @@ describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', 
     const edges = getEdgesBySource(db, 'Cars.md');
     const edge = edges.find((e) => e.targetId === 'BMW.md');
     expect(edge).toBeDefined();
-    expect(edge?.targetFragment).toBe('Specs');
+    expect(edge?.targetSubpath).toBe('Specs');
   }, 120_000);
 
   it('handles block-reference anchors (^block) the same way', async () => {
@@ -290,24 +290,23 @@ describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', 
     const edges = getEdgesBySource(db, 'Notes.md');
     const edge = edges.find((e) => e.targetId === 'BMW.md');
     expect(edge).toBeDefined();
-    expect(edge?.targetFragment).toBe('abc123');
+    expect(edge?.targetSubpath).toBe('abc123');
     // No fragment-embedded stub anywhere.
     expect(getNode(db, '_stub/BMW^abc123.md')).toBeUndefined();
   }, 120_000);
 });
 
 /**
- * v1.6.5 — schema migration. An existing v3 DB (edges table without
- * target_fragment column) upgrades in place on next bootstrap and is
- * queryable afterwards without data loss.
+ * Schema migration helpers exercised directly (unit). bootstrap()-level
+ * integration coverage lives in test/pipeline/bootstrap.test.ts.
  */
-describe('ensureEdgesTargetFragmentColumn migration (v1.6.5)', () => {
-  it('adds the target_fragment column in-place on a v3 schema', () => {
+describe('edges-column migrations (schema v4 + v5)', () => {
+  it('ensureEdgesTargetFragmentColumn adds target_fragment on a pre-v4 DB and is idempotent', () => {
     const db = openDb(':memory:');
-    // Simulate a v3 DB: drop the v4 column so the pre-migration state is faithful.
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    // Fresh v5 DB creates `target_subpath`. To simulate a pre-v4 DB we have
+    // to drop the v5 column AND anything the v4 migration would add.
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
 
-    // Existing data without target_fragment.
     db.prepare(
       "INSERT INTO nodes (id, title, content, frontmatter) VALUES ('a.md', 'A', 'x', '{}')",
     ).run();
@@ -318,7 +317,7 @@ describe('ensureEdgesTargetFragmentColumn migration (v1.6.5)', () => {
       "INSERT INTO edges (source_id, target_id, context) VALUES ('a.md', 'b.md', 'link')",
     ).run();
 
-    // Run the migration. Idempotent — second call is a no-op.
+    // Apply the v4 migration. Idempotent — second call is a no-op.
     ensureEdgesTargetFragmentColumn(db);
     ensureEdgesTargetFragmentColumn(db);
 
@@ -333,6 +332,19 @@ describe('ensureEdgesTargetFragmentColumn migration (v1.6.5)', () => {
       .get() as { source_id: string; target_id: string; target_fragment: string | null };
     expect(row).toEqual({ source_id: 'a.md', target_id: 'b.md', target_fragment: null });
 
+    db.close();
+  });
+
+  it('ensureEdgesTargetFragmentColumn is a no-op on a v5+ DB (target_subpath present)', () => {
+    const db = openDb(':memory:');
+    // Fresh install is v5 — target_subpath already exists, target_fragment does not.
+    ensureEdgesTargetFragmentColumn(db);
+    const cols = db
+      .prepare("PRAGMA table_info('edges')")
+      .all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('target_subpath');
+    expect(names).not.toContain('target_fragment'); // didn't re-add the old column
     db.close();
   });
 });

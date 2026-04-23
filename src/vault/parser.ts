@@ -113,7 +113,7 @@ export function parseFileFromContent(
       sourceId: relPath,
       targetId: resolvedTarget,
       context,
-      targetFragment: fragment,
+      targetSubpath: fragment,
     });
   }
 

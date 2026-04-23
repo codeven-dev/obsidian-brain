@@ -184,18 +184,17 @@ describe('bootstrap', () => {
     expect(result.reasons.some((r) => r.includes('embedder changed'))).toBe(true);
   });
 
-  // ── v1.6.9 regression: ensure bootstrap wires the target_fragment migration ─
+  // ── Schema migration chain regression (v1.6.9 + v1.6.11) ──────────────────
 
-  it('pre-v4 DB: bootstrap restores edges.target_fragment and leaves queries working', () => {
-    // Simulate a DB from before v1.6.5: the schema_version metadata says v3
-    // and the physical `edges` table is missing `target_fragment`. Any query
-    // from src/store/edges.ts would fail with "no such column: target_fragment"
-    // until bootstrap runs the migration.
+  it('pre-v4 DB: bootstrap chain adds target_subpath and leaves queries working', () => {
+    // Simulate a pre-v1.6.5 DB: the physical `edges` table has neither
+    // target_fragment nor target_subpath, and schema_version is v3. The
+    // chain has to apply the v4 migration (add target_fragment) and then
+    // the v5 migration (rename to target_subpath).
     const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
-    bootstrap(db, emb); // first boot stamps current SCHEMA_VERSION = 4
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    bootstrap(db, emb); // first boot stamps current SCHEMA_VERSION
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
     db.prepare("UPDATE index_metadata SET value = '3' WHERE key = 'schema_version'").run();
-    // Seed a node + edge so getEdgesBySource has something to return.
     upsertNode(db, { id: 'a.md', title: 'A', content: 'x', frontmatter: {} });
     upsertNode(db, { id: 'b.md', title: 'B', content: 'x', frontmatter: {} });
     db.prepare(
@@ -208,30 +207,60 @@ describe('bootstrap', () => {
     const cols = db
       .prepare("PRAGMA table_info('edges')")
       .all() as Array<{ name: string }>;
-    expect(cols.map((c) => c.name)).toContain('target_fragment');
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('target_subpath'); // v5 end state
+    expect(names).not.toContain('target_fragment'); // v4 intermediate renamed away
     // And the prod query path now works.
     expect(() => getEdgesBySource(db, 'a.md')).not.toThrow();
     const edges = getEdgesBySource(db, 'a.md');
     expect(edges).toHaveLength(1);
-    expect(edges[0]).toMatchObject({ sourceId: 'a.md', targetId: 'b.md', targetFragment: null });
+    expect(edges[0]).toMatchObject({ sourceId: 'a.md', targetId: 'b.md', targetSubpath: null });
   });
 
-  it('belt-and-braces: bootstrap restores target_fragment even when schema_version is already current', () => {
-    // Covers the unconditional call at the end of bootstrap() — if a prior
-    // boot stamped schema_version = 4 without running the ALTER (the exact
-    // real-world failure mode we just fixed), bootstrap should still heal
-    // the schema on the next boot.
+  it('v4 → v5: bootstrap renames target_fragment to target_subpath in place', () => {
+    // User on v1.6.5–v1.6.10: has target_fragment, schema_version=4. v1.6.11
+    // should run the rename migration and leave target_subpath in place.
     const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
-    bootstrap(db, emb); // schema_version = 4
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
-    // Leave schema_version at 4 — the bump-branch path does NOT fire.
+    bootstrap(db, emb);
+    // Simulate a v4 DB: rename target_subpath back to target_fragment to
+    // reverse our own migration for the test's pre-state.
+    db.exec('ALTER TABLE edges RENAME COLUMN target_subpath TO target_fragment');
+    db.prepare("UPDATE index_metadata SET value = '4' WHERE key = 'schema_version'").run();
+    db.prepare(
+      "INSERT INTO edges (source_id, target_id, context, target_fragment) VALUES ('x.md', 'y.md', 'link', 'Heading')",
+    ).run();
 
     bootstrap(db, emb);
 
     const cols = db
       .prepare("PRAGMA table_info('edges')")
       .all() as Array<{ name: string }>;
-    expect(cols.map((c) => c.name)).toContain('target_fragment');
+    const names = cols.map((c) => c.name);
+    expect(names).toContain('target_subpath');
+    expect(names).not.toContain('target_fragment');
+    // Data survives the rename.
+    const row = db
+      .prepare('SELECT target_subpath FROM edges WHERE source_id = ? AND target_id = ?')
+      .get('x.md', 'y.md') as { target_subpath: string | null };
+    expect(row.target_subpath).toBe('Heading');
+  });
+
+  it('belt-and-braces: bootstrap chain heals even when schema_version is already current', () => {
+    // Pre-v1.6.9 bug class: schema_version got stamped ahead of the actual
+    // schema. Both v4 and v5 chain entries must run unconditionally to heal
+    // a DB where the ALTER was skipped.
+    const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
+    bootstrap(db, emb); // schema_version = current, target_subpath present
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
+    // Leave schema_version at current — the chain's conditional loop does
+    // NOT fire, but the unconditional belt-and-braces pass must restore it.
+
+    bootstrap(db, emb);
+
+    const cols = db
+      .prepare("PRAGMA table_info('edges')")
+      .all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain('target_subpath');
   });
 
   it('Ollama provider: computePrefixStrategy returns empty → no prefix-strategy reindex', () => {

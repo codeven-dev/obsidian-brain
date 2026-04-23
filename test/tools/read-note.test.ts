@@ -54,8 +54,9 @@ function unwrap(result: any): any {
 
 /**
  * v1.6.9 regression: `read_note` in full mode calls getEdgesBySource /
- * getEdgesByTarget, which SELECT target_fragment. If the migration is
- * missing from bootstrap, a pre-v4 DB throws `no such column`.
+ * getEdgesByTarget, which SELECT target_subpath (target_fragment pre-v1.6.11).
+ * If the migration chain is missing from bootstrap, a pre-v4 DB throws
+ * `no such column`.
  */
 describe('tools/read_note — schema migration regression', () => {
   it('full mode succeeds on a DB that was pre-v4 before boot', async () => {
@@ -63,7 +64,7 @@ describe('tools/read_note — schema migration regression', () => {
     const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
 
     bootstrap(db, emb);
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
     db.prepare("UPDATE index_metadata SET value = '3' WHERE key = 'schema_version'").run();
 
     upsertNode(db, { id: 'a.md', title: 'Alpha', content: 'body', frontmatter: {} });
@@ -94,12 +95,12 @@ describe('tools/read_note — schema migration regression', () => {
     db.close();
   });
 
-  it('brief mode also succeeds on a pre-v4 DB (uses getEdgeSummariesBySource/Target, which do not SELECT target_fragment)', async () => {
+  it('brief mode also succeeds on a pre-v4 DB (uses getEdgeSummariesBySource/Target, which do not SELECT target_subpath)', async () => {
     const db = openDb(':memory:');
     const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
 
     bootstrap(db, emb);
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
     db.prepare("UPDATE index_metadata SET value = '3' WHERE key = 'schema_version'").run();
 
     upsertNode(db, { id: 'a.md', title: 'Alpha', content: 'body', frontmatter: {} });

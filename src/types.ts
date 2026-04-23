@@ -9,7 +9,7 @@ export interface ParsedEdge {
   sourceId: string;
   targetId: string;     // resolved path (bare — no #heading or ^block)
   context: string;      // enclosing paragraph
-  targetFragment?: string | null; // #heading or ^block suffix, without the `#`/`^` itself
+  targetSubpath?: string | null; // #heading or ^block suffix, without the `#`/`^` itself (matches Obsidian LinkCache.subpath / Dataview Link.subpath)
 }
 
 export interface StoredNode extends ParsedNode {

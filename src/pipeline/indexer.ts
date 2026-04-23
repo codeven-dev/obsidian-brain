@@ -292,7 +292,8 @@ export class IndexPipeline {
 
     for (const { id: stubId } of rows) {
       // Stub ids no longer contain `#` or `^` as of v1.6.5 — the parser
-      // splits heading/anchor suffixes onto `edge.target_fragment` before
+      // splits heading/anchor suffixes onto `edge.targetSubpath` (stored
+      // as target_subpath column; was target_fragment pre-v1.6.11) before
       // building the stub id. Legacy fragment-embedded stubs (pre-v1.6.5)
       // still exist in upgraded databases until the post-migration
       // reindex runs, so skip them here; `pruneAllOrphanStubs` cleans

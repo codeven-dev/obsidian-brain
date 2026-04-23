@@ -37,7 +37,7 @@ const DEFAULT_EMBEDDING_DIM = 384;
  *   embedding_model, embedding_dim, schema_version, embedder_provider,
  *   embedder_prefix_strategy
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * Open a SQLite database at `dbPath`, enable WAL mode, load the sqlite-vec
@@ -70,7 +70,7 @@ export function initSchema(db: DatabaseHandle): void {
       source_id TEXT NOT NULL,
       target_id TEXT NOT NULL,
       context TEXT NOT NULL DEFAULT '',
-      target_fragment TEXT
+      target_subpath TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
@@ -243,14 +243,43 @@ export function currentFtsTokenize(db: DatabaseHandle): string | null {
 
 /**
  * Idempotent in-place migration: ensure `edges.target_fragment` exists
- * (schema v4 addition). Safe to call on any schema version — if the
- * column already exists the ALTER is skipped.
+ * (schema v4 addition). Safe to call on any schema version — if the column
+ * already exists the ALTER is skipped. Also a no-op on schema v5+ where the
+ * column was renamed to target_subpath (the column-check below misses on
+ * the new name, so nothing runs).
  */
 export function ensureEdgesTargetFragmentColumn(db: DatabaseHandle): void {
   const cols = db
     .prepare("PRAGMA table_info('edges')")
     .all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === 'target_fragment')) {
+  const names = cols.map((c) => c.name);
+  // Skip on v5+ DBs: target_subpath already present means the rename
+  // migration has run. Don't re-add the old column.
+  if (names.includes('target_subpath')) return;
+  if (!names.includes('target_fragment')) {
     db.exec('ALTER TABLE edges ADD COLUMN target_fragment TEXT');
   }
+}
+
+/**
+ * Idempotent in-place migration: rename `edges.target_fragment` →
+ * `edges.target_subpath` (schema v5). Aligns with the Obsidian API's
+ * `LinkCache.subpath` naming used by Dataview, Juggl, and the official
+ * plugin API.
+ *
+ * Runs in three cases:
+ *   - Old column exists and new doesn't → rename (normal upgrade path).
+ *   - New column already exists → no-op (fresh v5+ install, or second boot).
+ *   - Neither exists → no-op (pre-v4 DB; ensureEdgesTargetFragmentColumn
+ *     will run before us in the chain and add target_fragment, then we
+ *     rename it).
+ */
+export function renameTargetFragmentToSubpath(db: DatabaseHandle): void {
+  const cols = db
+    .prepare("PRAGMA table_info('edges')")
+    .all() as Array<{ name: string }>;
+  const names = cols.map((c) => c.name);
+  if (names.includes('target_subpath')) return; // already renamed
+  if (!names.includes('target_fragment')) return; // nothing to rename
+  db.exec('ALTER TABLE edges RENAME COLUMN target_fragment TO target_subpath');
 }

@@ -54,9 +54,10 @@ function unwrap(result: any): any {
 
 /**
  * v1.6.9 regression: `find_connections` walks the edges table via
- * KnowledgeGraph.fromStore → getEdgesBySource, which SELECTs target_fragment.
- * If the migration is missing from bootstrap, the column is absent on any
- * pre-v4 DB and this handler throws `no such column: target_fragment`.
+ * KnowledgeGraph.fromStore → getEdgesBySource, which SELECTs target_subpath
+ * (target_fragment before v1.6.11). If the migration chain is missing from
+ * bootstrap, the column is absent on any pre-v4 DB and this handler throws
+ * `no such column`.
  */
 describe('tools/find_connections — schema migration regression', () => {
   it('succeeds on a DB that was pre-v4 before boot (bootstrap must heal the schema)', async () => {
@@ -66,7 +67,9 @@ describe('tools/find_connections — schema migration regression', () => {
     // Stamp metadata so bootstrap treats subsequent boots as upgrades.
     bootstrap(db, emb);
     // Simulate a pre-v4 schema on disk: missing column + stale schema_version.
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    // Simulate a pre-v5 DB by renaming target_subpath back to target_fragment,
+    // then drop it entirely, then set schema_version = 3 (deep-pre-v4).
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
     db.prepare("UPDATE index_metadata SET value = '3' WHERE key = 'schema_version'").run();
 
     // Seed two notes + one edge under the pre-v4 schema.
@@ -98,7 +101,9 @@ describe('tools/find_connections — schema migration regression', () => {
     const emb = new StubEmbedder('Xenova/all-MiniLM-L6-v2', 384, 'transformers.js');
 
     bootstrap(db, emb);
-    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+    // Simulate a pre-v5 DB by renaming target_subpath back to target_fragment,
+    // then drop it entirely, then set schema_version = 3 (deep-pre-v4).
+    db.exec('ALTER TABLE edges DROP COLUMN target_subpath');
     db.prepare("UPDATE index_metadata SET value = '3' WHERE key = 'schema_version'").run();
     upsertNode(db, { id: 'a.md', title: 'Alpha', content: 'x', frontmatter: {} });
     upsertNode(db, { id: 'b.md', title: 'Beta', content: 'x', frontmatter: {} });

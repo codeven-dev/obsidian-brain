@@ -6,6 +6,7 @@ import {
   ensureVecTables,
   rebuildFullTextIndex,
   currentFtsTokenize,
+  renameTargetFragmentToSubpath,
   SCHEMA_VERSION,
 } from '../store/db.js';
 import { getMetadata, setMetadata } from '../store/metadata.js';
@@ -43,6 +44,9 @@ const SCHEMA_MIGRATIONS: Array<{ to: number; apply: (db: DatabaseHandle) => void
   // migrations handled by the empty-chunks / FTS / prefix-strategy detection
   // in bootstrap()). No entries for them here.
   { to: 4, apply: ensureEdgesTargetFragmentColumn },
+  // v5: rename target_fragment → target_subpath to match the Obsidian
+  // ecosystem's LinkCache.subpath / Dataview Link.subpath naming.
+  { to: 5, apply: renameTargetFragmentToSubpath },
 ];
 
 /**
