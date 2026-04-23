@@ -128,22 +128,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Hugging Face embedding model
+      - name: Cache Hugging Face embedding models
+        # Normalized cache keys so release.yml and ci.yml share the same
+        # restore-keys prefix. Either workflow's cache is usable by the
+        # other: ci.yml populates on main-branch pushes, release.yml reads
+        # it via the hf-models- prefix fallback.
+        #
+        # continue-on-error: a transient cache service outage must NOT fail
+        # the release — we just re-download the models, which is slow but
+        # correct.
         uses: actions/cache@v5
+        continue-on-error: true
         with:
-          # Matches the TRANSFORMERS_CACHE env var set at job level, which
-          # the embedder picks up and forces transformers.js to use.
           path: ${{ github.workspace }}/.cache/huggingface
-          key: hf-Xenova-bge-small-en-v1.5
-          # Partial-match fallback: if the key's version suffix ever changes
-          # (e.g. bge-small-en-v1.5 → v2.0), restore the prior bge-small
-          # cache instead of cold-downloading. Matches only bge-small-*
-          # variants, so a wholesale default-model flip still cold-misses
-          # cleanly without polluting the cache with unrelated models.
-          restore-keys: hf-Xenova-bge-small-
-          # Static key tracking the v1.5.2 default embedder
-          # (Xenova/bge-small-en-v1.5 — see src/embeddings/presets.ts).
-          # Bump the suffix here if the default preset's model ever changes.
+          key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
+          restore-keys: |
+            hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-
+            hf-models-all-MiniLM-L6-v2-
+            hf-models-
+            hf-Xenova-bge-small-
 
       - name: Build
         run: npm run build

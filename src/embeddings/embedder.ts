@@ -85,13 +85,10 @@ export class TransformersEmbedder implements EmbedderInterface {
   }
 
   async init(): Promise<void> {
-    const p = (await pipeline('feature-extraction', this._model, {
-      dtype: 'q8',
-    })) as unknown as Extractor;
-    this.extractor = p;
+    this.extractor = await this.loadPipelineWithCorruptCacheRecovery();
     // Probe output length so callers can validate the DB's vec0 dim before
     // any embeds are written. Space is a cheap input.
-    const probe = await p(' ', { pooling: 'mean', normalize: true });
+    const probe = await this.extractor(' ', { pooling: 'mean', normalize: true });
     const vec = probe.tolist()[0];
     if (!vec || vec.length === 0) {
       throw new Error(
@@ -100,6 +97,66 @@ export class TransformersEmbedder implements EmbedderInterface {
       );
     }
     this._dim = vec.length;
+  }
+
+  /**
+   * Load the transformers.js pipeline, with a one-shot retry if the cached
+   * ONNX file looks corrupt. A truncated download from a killed prior run
+   * leaves a file that fails `Protobuf parsing` / `Load model … failed` when
+   * onnxruntime tries to parse it. Nuking the model's cache subdirectory
+   * and letting transformers.js re-download is the safe recovery — the
+   * cache is content-addressed under the model id, so we only delete our
+   * own model's subtree, not other users' models.
+   */
+  private async loadPipelineWithCorruptCacheRecovery(): Promise<Extractor> {
+    try {
+      return (await pipeline('feature-extraction', this._model, {
+        dtype: 'q8',
+      })) as unknown as Extractor;
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      const corrupt =
+        /Protobuf parsing failed/i.test(msg) ||
+        /Load model .* failed/i.test(msg) ||
+        /Invalid model file/i.test(msg);
+      if (!corrupt) throw err;
+
+      process.stderr.write(
+        `obsidian-brain: embedder load failed with "${msg.slice(0, 120)}..."; ` +
+          `this is usually a corrupt HF cache from a killed prior download. ` +
+          `Clearing the cache for "${this._model}" and retrying once.\n`,
+      );
+      await this.clearModelCache();
+      // One retry — if it fails again, throw the fresh error.
+      return (await pipeline('feature-extraction', this._model, {
+        dtype: 'q8',
+      })) as unknown as Extractor;
+    }
+  }
+
+  private async clearModelCache(): Promise<void> {
+    try {
+      // The transformers.js cache layout is:
+      //   <TRANSFORMERS_CACHE or node_modules/@huggingface/transformers/.cache>/<ModelNamespace>/<ModelName>/
+      // Resolve the cache root the same way the library does (env var > hfEnv default).
+      const { env: hfEnv } = await import('@huggingface/transformers');
+      const cacheRoot =
+        process.env.TRANSFORMERS_CACHE ??
+        process.env.HF_HOME ??
+        (hfEnv as unknown as { cacheDir?: string })?.cacheDir ??
+        '';
+      if (!cacheRoot) return;
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const modelDir = path.join(cacheRoot, this._model);
+      await fs.rm(modelDir, { recursive: true, force: true });
+    } catch (clearErr) {
+      process.stderr.write(
+        `obsidian-brain: could not clear HF cache directory: ${String((clearErr as Error)?.message ?? clearErr)}\n`,
+      );
+      // Swallow — if we can't clear it, the retry will likely fail the same way
+      // and the original error will propagate, which is correct behaviour.
+    }
   }
 
   /** Legacy numeric alias — new code should call dimensions(). */

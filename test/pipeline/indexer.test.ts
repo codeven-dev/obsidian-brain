@@ -24,8 +24,8 @@ describe.sequential('IndexPipeline', () => {
   }, 120_000);
 
   afterAll(async () => {
-    db.close();
-    await embedder.dispose();
+    if (db) db.close();
+    if (embedder) await embedder.dispose();
   });
 
   it('indexes the fixture vault', async () => {
@@ -77,17 +77,19 @@ describe.sequential('IndexPipeline — forward-ref stub resolution', () => {
   let tmpVault: string;
 
   beforeAll(async () => {
+    // Create the tmp vault + DB FIRST so afterAll can always clean them up,
+    // even if embedder.init() throws (e.g. on CI with a corrupt HF cache).
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-fwdref-'));
     db = openDb(':memory:');
     embedder = new Embedder();
     await embedder.init();
     pipeline = new IndexPipeline(db, embedder);
-    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-fwdref-'));
   }, 120_000);
 
   afterAll(async () => {
-    db.close();
-    await embedder.dispose();
-    rmSync(tmpVault, { recursive: true, force: true });
+    if (db) db.close();
+    if (embedder) await embedder.dispose();
+    if (tmpVault) rmSync(tmpVault, { recursive: true, force: true });
   });
 
   it('resolves forward-reference stubs when real note is later created', async () => {
@@ -123,17 +125,17 @@ describe.sequential('IndexPipeline.indexSingleNote', () => {
   let tmpVault: string;
 
   beforeAll(async () => {
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-test-'));
     db = openDb(':memory:');
     embedder = new Embedder();
     await embedder.init();
     pipeline = new IndexPipeline(db, embedder);
-    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-test-'));
   }, 120_000);
 
   afterAll(async () => {
-    db.close();
-    await embedder.dispose();
-    rmSync(tmpVault, { recursive: true, force: true });
+    if (db) db.close();
+    if (embedder) await embedder.dispose();
+    if (tmpVault) rmSync(tmpVault, { recursive: true, force: true });
   });
 
   it('adds a brand-new file', async () => {
@@ -192,17 +194,17 @@ describe.sequential('IndexPipeline.indexSingleNote — forward-stub migration', 
   let tmpVault: string;
 
   beforeAll(async () => {
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-fwd-single-'));
     db = openDb(':memory:');
     embedder = new Embedder();
     await embedder.init();
     pipeline = new IndexPipeline(db, embedder);
-    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-fwd-single-'));
   }, 120_000);
 
   afterAll(async () => {
-    db.close();
-    await embedder.dispose();
-    rmSync(tmpVault, { recursive: true, force: true });
+    if (db) db.close();
+    if (embedder) await embedder.dispose();
+    if (tmpVault) rmSync(tmpVault, { recursive: true, force: true });
   });
 
   it('repoints stub-target inbound edges to the new real note when the target is added via the watcher path', async () => {
@@ -242,17 +244,17 @@ describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', 
   let tmpVault: string;
 
   beforeAll(async () => {
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-frag-'));
     db = openDb(':memory:');
     embedder = new Embedder();
     await embedder.init();
     pipeline = new IndexPipeline(db, embedder);
-    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-frag-'));
   }, 120_000);
 
   afterAll(async () => {
-    db.close();
-    await embedder.dispose();
-    rmSync(tmpVault, { recursive: true, force: true });
+    if (db) db.close();
+    if (embedder) await embedder.dispose();
+    if (tmpVault) rmSync(tmpVault, { recursive: true, force: true });
   });
 
   it('splits [[BMW#Specs]] into bare stub + target_fragment="Specs"', async () => {

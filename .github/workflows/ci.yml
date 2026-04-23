@@ -30,6 +30,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pin transformers.js cache to a known workspace path so actions/cache can
+  # restore + save it across runs. Without this override, models land under
+  # node_modules/@huggingface/transformers/.cache (default), which survives
+  # the cache step only if we target that path explicitly — simpler to just
+  # route through $TRANSFORMERS_CACHE. Matches release.yml's pattern.
+  TRANSFORMERS_CACHE: ${{ github.workspace }}/.cache/huggingface
+
 jobs:
   validate:
     name: Build, test, smoke, docs
@@ -50,11 +58,57 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Cache Hugging Face embedding models
+        # Shared across main and dev: GitHub Actions cache scope is per-branch
+        # for WRITES (a cache created on dev is only readable on dev), BUT
+        # restore-keys fall back across branches via the default branch
+        # (main). So dev runs that don't have their own cache yet restore
+        # from main's. On every run, we save the cache under the current
+        # ref's scope, which means main builds up the shared fallback.
+        #
+        # Two models are cached under restore-key prefixes so both the
+        # all-MiniLM-L6-v2 default (used by tests that instantiate
+        # `new Embedder()` directly) and the bge-small-en-v1.5 preset
+        # default (used by factory-routed callers) both hit.
+        #
+        # continue-on-error: true — a transient cache service outage or a
+        # missing cache entirely must NOT fail the job. We just re-download
+        # the model, which is slow but correct.
+        uses: actions/cache@v5
+        continue-on-error: true
+        id: hf-cache
+        with:
+          path: ${{ github.workspace }}/.cache/huggingface
+          key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
+          restore-keys: |
+            hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-
+            hf-models-all-MiniLM-L6-v2-
+            hf-models-
+
       - name: Build
         run: npm run build
 
       - name: Unit tests
-        run: npm test
+        # If tests fail with a Protobuf-parsing or corrupt-ONNX error, the
+        # restored cache probably contains a partially-downloaded model from
+        # a killed prior run. The logic below captures the first-pass log,
+        # inspects it for the known corruption signatures, wipes the HF
+        # cache, and retries exactly once.
+        run: |
+          set +e
+          npm test 2>&1 | tee /tmp/test-output.log
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          if [ $test_exit -ne 0 ]; then
+            if grep -qE 'Protobuf parsing failed|Load model .* failed|ONNX' /tmp/test-output.log; then
+              echo "::warning::First-pass test failure looks like a corrupt HF cache. Wiping ${TRANSFORMERS_CACHE} and retrying once."
+              rm -rf "${TRANSFORMERS_CACHE}" || true
+              npm test
+            else
+              echo "::error::Tests failed for a reason unrelated to the HF cache — not retrying."
+              exit $test_exit
+            fi
+          fi
 
       - name: Smoke test
         run: npm run smoke
