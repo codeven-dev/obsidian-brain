@@ -1,7 +1,17 @@
 name: Release
 
-# Triggered by pushing a version tag like v1.5.2.
-# Suggested local flow:
+# Triggered ONLY by pushing a version tag like v1.5.2. Not by branch pushes.
+# Not by pull requests. Not by dev. A push to `dev` (or any branch that is
+# not a tag ref) will NOT fire this workflow — the trigger filter at the
+# bottom of this header block (`on: push: tags: ["v*"]`) makes branch
+# pushes a no-op for this file.
+#
+# Defense in depth: even if a v* tag somehow gets created on a non-main
+# commit, the "Main-branch guard" step refuses to publish anything whose
+# tag is not reachable from origin/main. So dev code cannot ship to npm
+# or the MCP Registry by this path — by trigger, by ref, and by guard.
+#
+# Suggested local flow (use `npm run promote` instead of the raw commands):
 #   npm version patch        # bumps package.json + commits + creates v<x.y.z> tag
 #   git push --follow-tags   # pushes commit + tag, fires this workflow
 #

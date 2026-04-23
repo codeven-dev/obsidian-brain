@@ -1,0 +1,97 @@
+# ci.yml — validation-only CI for every PR and every push to main/dev.
+#
+# What this workflow does:
+#   - Build (TypeScript compile)
+#   - Unit tests (vitest)
+#   - Smoke test (MCP handshake + every registered tool)
+#   - Docs build in strict mode (broken links, missing anchors, bad refs)
+#   - Generated-docs drift check (configuration.md / tools.md vs server.json / Zod schemas)
+#   - Spell check on docs + README + RELEASING.md
+#
+# What this workflow does NOT do:
+#   - No npm publish. No MCP Registry publish. No GitHub Release. No tag creation.
+#   - Publishing is tag-driven only, handled by .github/workflows/release.yml, which
+#     triggers on `tags: ["v*"]` and has a main-branch guard that refuses tags
+#     not reachable from origin/main. So a push to `dev` (or any non-tag event)
+#     cannot publish — by trigger, by ref, and by guard.
+#
+# Concurrency: re-pushes to the same ref cancel older in-flight runs, so the
+# latest code on a branch or PR is what gets validated.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build, test, smoke, docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Smoke test
+        run: npm run smoke
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: website/requirements.txt
+
+      - name: Install Python deps
+        run: pip install -r website/requirements.txt
+
+      - name: Docs build (strict)
+        run: npm run docs:build
+
+      - name: Generated-docs drift check
+        run: |
+          set -e
+          if [ -f scripts/gen-docs.mjs ]; then
+            npm run gen-docs -- --check
+          fi
+          if [ -f scripts/gen-tools-docs.mjs ]; then
+            npm run gen-tools-docs -- --check
+          fi
+
+      - name: Plugin major.minor check
+        run: |
+          # Advisory only — the sibling plugin repo isn't checked out in CI,
+          # so the script exits 0 with a warning. Local runs (via `npm run
+          # promote`) do the real check.
+          if [ -f scripts/check-plugin-version.mjs ]; then
+            npm run check-plugin
+          fi
+
+      - name: Spell check
+        run: |
+          pip install codespell
+          codespell docs/ README.md RELEASING.md --skip="*.json,*.lock"
