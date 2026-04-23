@@ -7,6 +7,18 @@ description: User-facing release notes. For full commit detail, see GitHub Relea
 
 User-facing release notes. For full commit-level detail see [GitHub Releases](https://github.com/sweir1/obsidian-brain/releases).
 
+## v1.6.8 — 2026-04-23 — Exit cleanly when MCP client disconnects (no more zombie processes)
+
+**⚠ Zombie-process fix.** When an MCP client (Claude Desktop, Jan, Cursor, Codex, VS Code) crashed or was force-quit without cleanly shutting down the servers it spawned, `obsidian-brain server` kept running — reparented to launchd (macOS) or init (Linux) — until the user manually killed it. Across many client restarts / crashes, zombies accumulated indefinitely.
+
+The stdio transport signals "parent gone" by closing the pipe (stdin EOF on the server side). Previously the server only listened for `SIGINT` and `SIGTERM`, which crashed clients don't send. Now `process.stdin` `end` and `close` events trigger the same graceful shutdown path, with a shutdown-reason logged to stderr so users watching logs understand why the process exited.
+
+- `src/server.ts` + `src/cli/index.ts`: stdin `end` / `close` events call the shutdown handler (alongside the existing SIGINT / SIGTERM signals), with an idempotent `shuttingDown` guard so duplicate triggers don't double-fire
+- Shutdown now logs its reason (`SIGINT` / `SIGTERM` / `stdin EOF (MCP client disconnected)` / `stdin closed (MCP client disconnected)`) to stderr
+- New `test/integration/server-stdin-shutdown.test.ts` spawns the compiled CLI, closes stdin, and asserts the child exits within 3 s
+
+To clean up any zombie `obsidian-brain server` processes from before this fix: `pkill -f 'obsidian-brain server'` (macOS/Linux).
+
 ## v1.6.7 — 2026-04-23 — MCP init timeout fix + non-blocking write tools
 
 **⚠ Behavior change for write tools.** `create_note`, `edit_note`, `apply_edit_preview`, `move_note`, `delete_note`, and `link_notes` now return as soon as the write completes; the subsequent reindex runs in the background instead of being awaited inside the response. A newly-written note becomes searchable within a few seconds (same window as the file watcher has always had for out-of-band edits). Agents or scripts that implicitly relied on synchronous write-then-search must either await a small delay or explicitly call `reindex` before the follow-up search.

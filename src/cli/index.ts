@@ -62,12 +62,18 @@ program
         debounceMs: opts.debounce,
         communityDebounceMs: opts.communityDebounce,
       });
-      const shutdown = async () => {
+      let shuttingDown = false;
+      const shutdown = async (reason: string): Promise<void> => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        process.stderr.write(`obsidian-brain: shutting down (${reason}).\n`);
         await handle.close();
         process.exit(0);
       };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', () => void shutdown('SIGINT'));
+      process.on('SIGTERM', () => void shutdown('SIGTERM'));
+      process.stdin.on('end', () => void shutdown('stdin EOF'));
+      process.stdin.on('close', () => void shutdown('stdin closed'));
       await new Promise<void>(() => {}); // hold process open
     },
   );

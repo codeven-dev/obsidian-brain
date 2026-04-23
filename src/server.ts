@@ -123,12 +123,25 @@ export async function startServer(): Promise<void> {
     handle = startWatcher(ctx, readWatcherOptsFromEnv());
   }
 
-  const shutdown = async () => {
+  let shuttingDown = false;
+  const shutdown = async (reason: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`obsidian-brain: shutting down (${reason}).\n`);
     if (handle) await handle.close();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  // Exit when the MCP client disconnects — for stdio transport, the client
+  // closing its end of the pipe IS the normal shutdown signal. Without these
+  // handlers, a crashed / force-quit MCP client (Claude Desktop, Jan, Codex,
+  // Cursor, VS Code) leaves this process orphaned under launchd (macOS) or
+  // init (Linux) until the user manually kills it. Watch both `end` (EOF on
+  // stdin — usually what happens) and `close` (stream destroyed — belt and
+  // braces for edge cases).
+  process.stdin.on('end', () => void shutdown('stdin EOF (MCP client disconnected)'));
+  process.stdin.on('close', () => void shutdown('stdin closed (MCP client disconnected)'));
 }
 
 function readWatcherOptsFromEnv() {
