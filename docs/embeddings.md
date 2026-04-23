@@ -39,7 +39,7 @@ Example MCP client config with a preset:
 | Default-tier alt | `Xenova/all-MiniLM-L12-v2` | 384 | ~34 MB | English, symmetric. More depth than L6 at similar size. |
 | Default-tier alt | `Xenova/jina-embeddings-v2-small-en` | 512 | ~33 MB | English, symmetric. Long-context friendly. |
 | Power-user (over budget) | `Xenova/bge-base-en-v1.5` | 768 | ~110 MB | Best CPU quality, but above the default size budget. |
-| **Multilingual** | *(via Ollama)* | — | — | See below — no transformers.js multilingual model fits the ≤60 MB budget. |
+| **Multilingual** (over budget) | `Xenova/multilingual-e5-small` | 384 | ~135 MB | 94 languages. Set `EMBEDDING_PRESET=multilingual` and restart — auto-reindexes. Above the 60 MB default-tier budget but still purely local. |
 
 ### Chunk-level embeddings
 
@@ -49,7 +49,35 @@ The default `hybrid` search mode fuses chunk-level semantic rank and full-text B
 
 ## Multilingual / non-English vaults
 
-Every viable multilingual embedding model is above the ≤60 MB default-tier size budget (smallest is `multilingual-e5-small` at 118 MB quantized). Rather than bundle that into the transformers.js default tier, the recommended path for non-English or mixed-language vaults is the Ollama provider:
+Set one env var and restart. The multilingual path Just Works via transformers.js — no extra server, no Ollama:
+
+```json
+{
+  "mcpServers": {
+    "obsidian-brain": {
+      "command": "npx",
+      "args": ["-y", "obsidian-brain@latest", "server"],
+      "env": {
+        "VAULT_PATH": "/absolute/path/to/your/vault",
+        "EMBEDDING_PRESET": "multilingual"
+      }
+    }
+  }
+}
+```
+
+This pulls `Xenova/multilingual-e5-small` (384-dim, 94 languages, ~135 MB one-time download = 118 MB ONNX + 17 MB tokenizer). The mandatory `query: ` / `passage: ` E5 prefixes are applied automatically per task type — you don't need to think about them. The auto-reindex triggers on next boot; incremental reindexes after that are imperceptibly different from the English presets thanks to SHA-256 content-hash dedup.
+
+Rough speed numbers (single M1/M2 Mac, CPU-only, per chunk):
+
+| Preset | Approx. embed latency | 3k-note vault initial index | Model download |
+|---|---|---|---|
+| `fastest` / `balanced` / `english` | ~30–60 ms / chunk | ~10–20 min | 17–34 MB, under a minute |
+| `multilingual` | ~60–150 ms / chunk | ~30–50 min | ~135 MB, 1–3 min on 10 Mbps |
+
+### Advanced: multilingual via Ollama
+
+If you already run [Ollama](https://ollama.com) and want a higher-quality multilingual model (at the cost of a running server), pull one and flip the provider:
 
 ```bash
 ollama pull bge-m3              # or: nomic-embed-text, multilingual-e5-large
@@ -57,18 +85,7 @@ export EMBEDDING_PROVIDER=ollama
 export EMBEDDING_MODEL=bge-m3
 ```
 
-Ollama handles model storage out-of-band (not part of the npm install), so there's no bundle-size tax on Ollama-based multilingual support. `bge-m3` is a strong default — 100+ languages, dense + sparse + multi-vector heads, asymmetric query prefixing handled automatically by the Ollama task-type prefix logic.
-
-If you need multilingual via transformers.js (e.g. you don't run Ollama), `Xenova/multilingual-e5-small` (118 MB) works — set `EMBEDDING_PRESET=multilingual` or `EMBEDDING_MODEL=Xenova/multilingual-e5-small`. Expect a one-time 118 MB download and a slower first-boot index. This is not the default tier.
-
-Rough speed numbers (single M1/M2 Mac, CPU-only, per chunk):
-
-| Preset | Approx. embed latency | 3k-note vault initial index | Model download |
-|---|---|---|---|
-| `fastest` / `balanced` / `english` | ~30–60 ms / chunk | ~10–20 min | 17–34 MB, under a minute |
-| `multilingual` | ~60–150 ms / chunk | ~30–50 min | 118 MB, 1–3 min on 10 Mbps |
-
-Incremental reindex (post-initial) is imperceptibly different between presets because of SHA-256 content-hash dedup — only newly changed chunks get re-embedded.
+`bge-m3` covers 100+ languages with dense + sparse + multi-vector heads. Model storage is out-of-band (not part of the npm install). Asymmetric query prefixing is still handled automatically.
 
 ## Alternative provider: Ollama
 
