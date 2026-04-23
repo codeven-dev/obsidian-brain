@@ -47,7 +47,7 @@ describe('move-note link rewrite flow (H1)', () => {
     expect(move.newPath).toBe('renamed.md');
 
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
-    expect(report).toEqual({ files: 1, occurrences: 1 });
+    expect(report).toEqual({ files: 1, occurrences: 1, rewrittenSources: ['source.md'] });
 
     const src = await readFile(join(vault, 'source.md'), 'utf-8');
     expect(src).toBe('See [[renamed]] for context.\n');
@@ -59,7 +59,7 @@ describe('move-note link rewrite flow (H1)', () => {
 
     const move = await moveNote(vault, 'lonely.md', 'still-lonely.md');
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
-    expect(report).toEqual({ files: 0, occurrences: 0 });
+    expect(report).toEqual({ files: 0, occurrences: 0, rewrittenSources: [] });
   });
 
   it('rewrites every variant ([[x]], ![[x]], [[x|alias]]) in one source', async () => {
@@ -79,7 +79,7 @@ describe('move-note link rewrite flow (H1)', () => {
 
     const move = await moveNote(vault, 'target.md', 'renamed.md');
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
-    expect(report).toEqual({ files: 1, occurrences: 3 });
+    expect(report).toEqual({ files: 1, occurrences: 3, rewrittenSources: ['source.md'] });
 
     const src = await readFile(join(vault, 'source.md'), 'utf-8');
     expect(src).toBe(
@@ -100,7 +100,9 @@ describe('move-note link rewrite flow (H1)', () => {
 
     const move = await moveNote(vault, 'target.md', 'renamed.md');
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
-    expect(report).toEqual({ files: 2, occurrences: 2 });
+    expect(report.files).toBe(2);
+    expect(report.occurrences).toBe(2);
+    expect(new Set(report.rewrittenSources)).toEqual(new Set(['a.md', 'b.md']));
 
     expect(await readFile(join(vault, 'a.md'), 'utf-8')).toBe(
       'Refs [[renamed]] here.\n',
@@ -121,7 +123,7 @@ describe('move-note link rewrite flow (H1)', () => {
     // Move into a subdir, same basename.
     const move = await moveNote(vault, 'keep.md', 'Archive/keep.md');
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
-    expect(report).toEqual({ files: 0, occurrences: 0 });
+    expect(report).toEqual({ files: 0, occurrences: 0, rewrittenSources: [] });
 
     // Source file untouched — the bare stem still resolves.
     expect(await readFile(join(vault, 'source.md'), 'utf-8')).toBe(
@@ -140,7 +142,7 @@ describe('move-note link rewrite flow (H1)', () => {
     const move = await moveNote(vault, 'target.md', 'renamed.md');
     const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
     // Missing file is silently skipped; no throw, no false positive.
-    expect(report).toEqual({ files: 0, occurrences: 0 });
+    expect(report).toEqual({ files: 0, occurrences: 0, rewrittenSources: [] });
   });
 });
 
@@ -422,5 +424,103 @@ describe('move_note dryRun=true returns preview without mutating (v1.6.0-C)', ()
     // DB is unchanged.
     const afterNodes = allNodeIds(db).slice().sort();
     expect(afterNodes).toEqual(beforeNodes);
+  });
+});
+
+/**
+ * Regression tests for v1.6.2 — `move_note` ghost-link fix.
+ *
+ * The field symptom: user renames BMW.md → `BMW & Audi.md`, but `Cars.md`
+ * (which contained `[[BMW]]`) ends up unchanged on disk, and the graph shows
+ * a dangling edge Cars → _stub/BMW.md. Two root causes:
+ *
+ *  (a) `rewriteInboundLinks` queried `getEdgesByTarget(db, oldPath)` only,
+ *      so inbound edges still targeting `_stub/${oldStem}.md` (leftovers
+ *      from forward-ref timing or pre-v1.5.8 state) were silently skipped
+ *      and the source files never got rewritten.
+ *
+ *  (b) `indexSingleNote` — the watcher's per-file path — didn't call
+ *      `migrateStubToReal` when a real note arrived with a pre-existing
+ *      forward-ref stub. So stub-target edges persisted indefinitely.
+ *
+ * The fix merges `_stub/${oldStem}.md` into the inbound-edge lookup and
+ * wires `indexSingleNote` to migrate forward-stubs the same way
+ * `create_note` does.
+ */
+describe('move_note ghost-link fix (v1.6.2)', () => {
+  let vault: string;
+  let db: DatabaseHandle;
+
+  beforeEach(async () => {
+    vault = await mkdtemp(join(tmpdir(), 'kg-v1-6-2-'));
+    db = openDb(':memory:');
+  });
+
+  afterEach(async () => {
+    db.close();
+    await rm(vault, { recursive: true, force: true });
+  });
+
+  it('rewriteInboundLinks finds source files whose edge targets _stub/<oldStem>.md', async () => {
+    // Disk state: both files exist, BMW is the real target.
+    await writeFile(join(vault, 'BMW.md'), '# BMW\n', 'utf-8');
+    await writeFile(join(vault, 'Cars.md'), 'I drive a [[BMW]] every day.\n', 'utf-8');
+
+    // Graph state: mimic pre-v1.5.8 — the real BMW node exists, but Cars's
+    // edge still points at _stub/BMW.md because the forward-ref migration
+    // never ran. The ghost-link symptom starts here.
+    upsertNode(db, { id: 'BMW.md', title: 'BMW', content: '', frontmatter: {} });
+    upsertNode(db, { id: 'Cars.md', title: 'Cars', content: '', frontmatter: {} });
+    upsertNode(db, {
+      id: '_stub/BMW.md',
+      title: 'BMW',
+      content: '',
+      frontmatter: { _stub: true },
+    });
+    insertEdge(db, { sourceId: 'Cars.md', targetId: '_stub/BMW.md', context: 'link' });
+
+    // Rename BMW → "BMW & Audi".
+    const move = await moveNote(vault, 'BMW.md', 'BMW & Audi.md');
+
+    const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
+
+    // The stub-target edge must now pull Cars.md into the rewrite set.
+    expect(report.files).toBe(1);
+    expect(report.occurrences).toBe(1);
+    expect(report.rewrittenSources).toEqual(['Cars.md']);
+
+    // And the file content on disk is updated.
+    expect(await readFile(join(vault, 'Cars.md'), 'utf-8')).toBe(
+      'I drive a [[BMW & Audi]] every day.\n',
+    );
+  });
+
+  it('combines real-target and stub-target inbound edges without double-counting the same source', async () => {
+    await writeFile(join(vault, 'target.md'), '# Target\n', 'utf-8');
+    await writeFile(
+      join(vault, 'source.md'),
+      'Real-target [[target]] and stub-target [[target]] again.\n',
+      'utf-8',
+    );
+
+    upsertNode(db, { id: 'target.md', title: 'Target', content: '', frontmatter: {} });
+    upsertNode(db, { id: 'source.md', title: 'Source', content: '', frontmatter: {} });
+    // Two edges: one resolved to the real node, one stuck on the stub.
+    insertEdge(db, { sourceId: 'source.md', targetId: 'target.md', context: 'link' });
+    upsertNode(db, {
+      id: '_stub/target.md',
+      title: 'target',
+      content: '',
+      frontmatter: { _stub: true },
+    });
+    insertEdge(db, { sourceId: 'source.md', targetId: '_stub/target.md', context: 'link' });
+
+    const move = await moveNote(vault, 'target.md', 'renamed.md');
+    const report = await rewriteInboundLinks(db, vault, move.oldPath, move.newPath);
+
+    // The source is rewritten once (Set dedup), occurrences counts both hits.
+    expect(report.files).toBe(1);
+    expect(report.occurrences).toBe(2);
+    expect(report.rewrittenSources).toEqual(['source.md']);
   });
 });

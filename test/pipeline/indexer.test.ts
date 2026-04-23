@@ -179,3 +179,50 @@ describe.sequential('IndexPipeline.indexSingleNote', () => {
     expect(second.indexed).toBe(false);
   }, 60_000);
 });
+
+/**
+ * v1.6.2 — indexSingleNote migrates forward-reference stubs inline, matching
+ * what `create_note` does. Without this the watcher leaves stub-target edges
+ * forever, which breaks `move_note`'s link-rewrite step later on.
+ */
+describe.sequential('IndexPipeline.indexSingleNote — forward-stub migration', () => {
+  let db: DatabaseHandle;
+  let embedder: Embedder;
+  let pipeline: IndexPipeline;
+  let tmpVault: string;
+
+  beforeAll(async () => {
+    db = openDb(':memory:');
+    embedder = new Embedder();
+    await embedder.init();
+    pipeline = new IndexPipeline(db, embedder);
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-fwd-single-'));
+  }, 120_000);
+
+  afterAll(async () => {
+    db.close();
+    await embedder.dispose();
+    rmSync(tmpVault, { recursive: true, force: true });
+  });
+
+  it('repoints stub-target inbound edges to the new real note when the target is added via the watcher path', async () => {
+    // Cars.md links to BMW before BMW exists — a forward reference, which
+    // becomes a stub + stub-target edge when indexed.
+    writeFileSync(join(tmpVault, 'Cars.md'), '# Cars\n\nI drive a [[BMW]].\n');
+    await pipeline.indexSingleNote(tmpVault, 'Cars.md', 'add');
+
+    expect(getNode(db, '_stub/BMW.md')).toBeDefined();
+    const before = getEdgesBySource(db, 'Cars.md');
+    expect(before.some((e) => e.targetId === '_stub/BMW.md')).toBe(true);
+
+    // Now BMW.md arrives via the watcher path (not via `create_note`).
+    writeFileSync(join(tmpVault, 'BMW.md'), '# BMW\n\nReal note.\n');
+    await pipeline.indexSingleNote(tmpVault, 'BMW.md', 'add');
+
+    // The stub must have been migrated: stub gone, edge retargeted.
+    expect(getNode(db, '_stub/BMW.md')).toBeUndefined();
+    const after = getEdgesBySource(db, 'Cars.md');
+    expect(after.some((e) => e.targetId === 'BMW.md')).toBe(true);
+    expect(after.some((e) => e.targetId === '_stub/BMW.md')).toBe(false);
+  }, 120_000);
+});

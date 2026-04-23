@@ -178,4 +178,47 @@ describe('rewriteWikiLinks', () => {
     expect(text).toBe('Padded [[new]] link.');
     expect(occurrences).toBe(1);
   });
+
+  // v1.6.2 — document that special characters in old/new stems are safe. The
+  // implementation uses stem equality + string concatenation, not regex
+  // construction, so `&`, `()`, `+`, `?`, `$` never trigger metachar fallout.
+  it('handles ampersands in the new stem', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'I drive a [[BMW]] today.',
+      'BMW',
+      'BMW & Audi',
+    );
+    expect(text).toBe('I drive a [[BMW & Audi]] today.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('handles parentheses in the new stem', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'See [[Notes]] here.',
+      'Notes',
+      'Notes (2025)',
+    );
+    expect(text).toBe('See [[Notes (2025)]] here.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('handles plus signs in the old and new stems', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Template in [[C++]] is hard.',
+      'C++',
+      'C Plus Plus',
+    );
+    expect(text).toBe('Template in [[C Plus Plus]] is hard.');
+    expect(occurrences).toBe(1);
+  });
+
+  it('handles dollar signs in the new stem (no regex replacement-string interpolation)', () => {
+    const { text, occurrences } = rewriteWikiLinks(
+      'Price in [[dollars]].',
+      'dollars',
+      '$amount',
+    );
+    expect(text).toBe('Price in [[$amount]].');
+    expect(occurrences).toBe(1);
+  });
 });

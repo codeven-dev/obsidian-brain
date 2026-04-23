@@ -1,5 +1,5 @@
 import { stat } from 'fs/promises';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { parseVault, parseSingleFile } from '../vault/parser.js';
 import type { DatabaseHandle } from '../store/db.js';
 import { upsertNode, getNode, deleteNode, migrateStubToReal, pruneAllOrphanStubs } from '../store/nodes.js';
@@ -165,6 +165,19 @@ export class IndexPipeline {
     };
     await this.applyNode(node, edges, fileStat.mtimeMs, stats);
     stats.stubNodesCreated += this.materialiseStubs(stubIds);
+
+    // Resolve any forward-reference stub for this note's bare stem. Mirrors
+    // what `create_note` already does: when another note wrote `[[X]]` before
+    // `X.md` existed, a `_stub/X.md` node was materialised. Now that the real
+    // note is indexed, repoint all inbound edges and delete the stub. The
+    // full `index()` path handles this via `resolveForwardStubs`, but the
+    // single-file path is what the watcher calls — and without this, edges
+    // sit on stub targets forever, which is exactly how `move_note` ends up
+    // missing them when it later queries `getEdgesByTarget(oldPath)`.
+    const stem = basename(relPath, '.md');
+    if (stem) {
+      migrateStubToReal(this.db, `_stub/${stem}.md`, relPath);
+    }
 
     return {
       indexed: stats.nodesIndexed > 0,

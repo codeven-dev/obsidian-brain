@@ -10,6 +10,7 @@ import { moveNote } from '../vault/mover.js';
 import { rewriteWikiLinks } from '../vault/wiki-links.js';
 import { getEdgesByTarget } from '../store/edges.js';
 import { allNodeIds, pruneOrphanStubs } from '../store/nodes.js';
+import { setSyncMtime } from '../store/sync.js';
 
 /**
  * Compute what `rewriteInboundLinks` would do without writing anything.
@@ -25,7 +26,14 @@ async function previewInboundRewrites(
   const newStem = basename(newPath, '.md');
   if (oldStem === newStem) return [];
 
-  const inbound = getEdgesByTarget(db, oldPath);
+  // Also pick up edges pointing at the matching stub path. Pre-v1.5.8 vaults
+  // and forward-ref-stubs that were never migrated to real keep their edges
+  // on `_stub/${oldStem}.md` — rewriting those source files needs them too.
+  const stubPath = `_stub/${oldStem}.md`;
+  const inbound = [
+    ...getEdgesByTarget(db, oldPath),
+    ...getEdgesByTarget(db, stubPath),
+  ];
   const sources = new Set(inbound.map((e) => e.sourceId));
   sources.delete(oldPath);
   sources.delete(newPath);
@@ -97,6 +105,15 @@ export function registerMoveNoteTool(server: McpServer, ctx: ServerContext): voi
         result.newPath,
       );
 
+      // Force the next reindex pass to reparse every rewritten source. On
+      // filesystems with 1-second mtime resolution, a fast rewrite could
+      // land in the same integer second as the previously-recorded mtime
+      // and `applyNode`'s `prevMtime >= mtime` check would skip it, leaving
+      // edges stale. Zeroing the sync mtime guarantees reparse.
+      for (const src of linksRewritten.rewrittenSources) {
+        setSyncMtime(ctx.db, src, 0);
+      }
+
       const oldStem = basename(result.oldPath, '.md');
       const stubCandidates = allNodeIds(ctx.db).filter((id) =>
         id.startsWith(`_stub/${oldStem}`),
@@ -109,14 +126,18 @@ export function registerMoveNoteTool(server: McpServer, ctx: ServerContext): voi
       } catch (err) {
         return {
           ...result,
-          linksRewritten,
+          linksRewritten: { files: linksRewritten.files, occurrences: linksRewritten.occurrences },
           stubsPruned,
           reindex: 'failed',
           reindexError: String(err),
         };
       }
 
-      return { ...result, linksRewritten, stubsPruned };
+      return {
+        ...result,
+        linksRewritten: { files: linksRewritten.files, occurrences: linksRewritten.occurrences },
+        stubsPruned,
+      };
     },
   );
 }
@@ -134,14 +155,22 @@ export async function rewriteInboundLinks(
   vaultPath: string,
   oldPath: string,
   newPath: string,
-): Promise<{ files: number; occurrences: number }> {
+): Promise<{ files: number; occurrences: number; rewrittenSources: string[] }> {
   const oldStem = basename(oldPath, '.md');
   const newStem = basename(newPath, '.md');
 
   // A rename that only changes the directory leaves every link intact.
-  if (oldStem === newStem) return { files: 0, occurrences: 0 };
+  if (oldStem === newStem) return { files: 0, occurrences: 0, rewrittenSources: [] };
 
-  const inbound = getEdgesByTarget(db, oldPath);
+  // Also pick up edges whose target is the matching stub path. These can be
+  // left over from forward-ref stubs that were never migrated to real — old
+  // vault state (pre-v1.5.8) or notes created via the watcher path. Without
+  // this merge, source files that linked through the stub never get rewritten.
+  const stubPath = `_stub/${oldStem}.md`;
+  const inbound = [
+    ...getEdgesByTarget(db, oldPath),
+    ...getEdgesByTarget(db, stubPath),
+  ];
   const sources = new Set(inbound.map((e) => e.sourceId));
   // Moving a note can't break a link from itself, but skip defensively.
   sources.delete(oldPath);
@@ -149,6 +178,7 @@ export async function rewriteInboundLinks(
 
   let files = 0;
   let occurrences = 0;
+  const rewrittenSources: string[] = [];
   for (const sourceRel of sources) {
     const abs = join(vaultPath, sourceRel);
     let content: string;
@@ -162,9 +192,10 @@ export async function rewriteInboundLinks(
       await fs.writeFile(abs, text, 'utf-8');
       files++;
       occurrences += hits;
+      rewrittenSources.push(sourceRel);
     }
   }
-  return { files, occurrences };
+  return { files, occurrences, rewrittenSources };
 }
 
 function resolveToSinglePath(name: string, ctx: ServerContext): string {
