@@ -69,39 +69,83 @@ message and refuses to publish.
 ## How to release — one command
 
 ```bash
-npm run promote          # patch bump (default)
-npm run promote -- minor # minor bump
-npm run promote -- major # major bump
+# Ship everything on dev (common case):
+npm run promote                       # patch bump  (default)
+npm run promote -- minor              # minor bump
+npm run promote -- major              # major bump
+
+# Ship only up to a specific commit on dev (cherry-pick release):
+npm run promote -- <commit>           # patch bump, ship up to <commit>
+npm run promote -- minor <commit>     # minor bump, ship up to <commit>
+npm run promote -- major <commit>     # major bump, ship up to <commit>
 ```
 
-`scripts/promote.mjs` performs every step in the correct order:
+`<commit>` can be any ref git understands — short SHA, full SHA, tag name. It
+must be reachable from `dev` (an ancestor of dev HEAD) and must be ahead of
+`main` (something new to ship). Args are order-independent: `npm run promote
+-- abc1234 minor` also works. Leading dashes on the bump type are allowed
+(`--patch` / `--minor` / `--major`).
 
-1. **Validates the bump type** — `patch`, `minor`, or `major`. Exits immediately
-   on anything else.
-2. **Asserts current branch is `dev`** — exits if you're on `main` or anywhere
-   else.
-3. **Asserts a clean working tree** (`git status --porcelain`) — exits if there
-   are uncommitted changes.
-4. **Asserts `main..dev` is non-empty** (`git log main..dev --oneline`) — exits
-   with "nothing to promote" if dev has no new commits.
-5. **Runs `npm run check-plugin`** if the script exists in `package.json`. If
-   absent (Phase 3 adds it), skips silently. See "Plugin version-matching" below.
-6. **Fetches origin**, checks out `main`, and runs `git pull --ff-only origin main`.
-7. **Merges dev into main** with `git merge --ff-only dev`. If the merge cannot
-   be completed as a fast-forward (main has diverged), the script fails loudly
-   rather than creating a merge commit. Resolve the divergence manually before
-   retrying.
-8. **Runs `npm version ${bump}`** — fires the `version` and `postversion` hooks,
-   creating the version commit, tag, and push to `origin/main`. This is the step
-   that triggers `release.yml`.
-9. **Returns to `dev`**: checks out `dev`, fast-forwards it to `main`
-   (`git merge --ff-only main`), and pushes `origin dev`.
-10. **Prints a summary** showing the new version, branch states, and a reminder
-    that CI is now running.
+### What bump type to pick
 
-Safety: the FF-only constraint means the script either succeeds cleanly or fails
-without creating any partial state. If it fails at step 7 or later, `main` may
-be checked out locally — return to `dev` with `git checkout dev` and investigate.
+`promote` never auto-detects. You pick based on what's in the release:
+
+- **patch** — bug fixes, docs, internal refactors, anything that doesn't change
+  tool names, arg shapes, or observable server behavior.
+- **minor** — new tools, new optional arg on an existing tool, new env var,
+  or any feature addition that's backwards-compatible.
+- **major** — tool renamed, tool removed, required arg added, env var made
+  required, any change that forces users to update their config or prompts.
+
+When in doubt, go patch. The failure mode of under-bumping is that consumers
+on `@latest` silently get the update; the failure mode of over-bumping is
+permanent noise in the version history.
+
+### What commit hash to pass (and when)
+
+**Default case: don't pass one.** `npm run promote` ships everything on dev.
+That's the 95% case.
+
+**Pass a commit only when** dev has work you want to hold back. Typical reasons:
+
+- "I want to ship the bugfix commit now but hold the half-finished feature."
+- "A later commit on dev has issues I haven't fixed — ship the earlier stable
+  commit, keep the broken one on dev for now."
+
+Find the commit with `git log main..dev --oneline`, grab its short SHA, pass it.
+
+### What `promote` actually does
+
+1. **Parses args** — bump type + optional commit (order-independent).
+2. **Asserts current branch is `dev`** — exits if you're on `main` or elsewhere.
+3. **Asserts a clean working tree** — exits on uncommitted changes.
+4. **Fetches origin** to get the current state of both branches.
+5. **Resolves the target commit** (the provided ref, or dev HEAD if none).
+   Validates the target is reachable from dev and is ahead of main.
+6. **Runs `npm run check-plugin`** if the script exists in `package.json`.
+   See "Plugin version-matching" below.
+7. **Switches to `main`**, runs `git pull --ff-only origin main`.
+8. **Merges target into main** with `git merge --ff-only <target>`. If the
+   merge cannot be completed as a fast-forward (main has diverged), the
+   script fails loudly rather than creating a merge commit.
+9. **Runs `npm version ${bump}`** — fires the `version` and `postversion`
+   hooks, creating the version commit + tag and pushing to `origin/main`.
+   This is the step that triggers `release.yml`.
+10. **Returns to `dev`** and syncs:
+    - **Full-ship case** (target was dev HEAD): `git merge --ff-only main`
+      fast-forwards dev to include the bump commit, then `git push origin dev`.
+    - **Cherry-pick case** (target was older than dev HEAD): dev has commits
+      beyond the promoted target, so main and dev have diverged. The script
+      runs `git rebase main`, replaying dev's extra commits on top of the
+      bump commit, then `git push --force-with-lease origin dev`. **This
+      rewrites dev history.** Fine for solo work; coordinate if you share
+      dev with anyone else.
+11. **Prints a summary** — new version, tagged commit, branch states, CI status.
+
+Safety: the FF-only + `--force-with-lease` constraints mean the script either
+succeeds cleanly or fails without destroying unpublished work. If it fails
+mid-flight, `main` may be checked out locally — return to `dev` with
+`git checkout dev` and investigate before retrying.
 
 ---
 
