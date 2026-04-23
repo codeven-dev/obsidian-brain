@@ -117,8 +117,27 @@ jobs:
           path: ${{ github.workspace }}/.cache/huggingface
           key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
 
-      - name: Unit tests
-        run: npm test
+      - name: Unit tests + coverage
+        # NOTE: if you change this invocation (flags, env, script name),
+        # also update the "tests + coverage" step in scripts/preflight.mjs
+        # — both places must stay in sync or CI and local will drift.
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        # Runs regardless of earlier step outcome so the HTML report is
+        # reachable whether CI is green (cheap debugging signal) or red
+        # (no local re-run needed to see which file tripped the threshold).
+        # Short retention keeps storage trivial. This is the load-bearing
+        # replacement for not using Codecov — without it, a threshold-trip
+        # in CI forces the developer to re-run locally to inspect
+        # coverage/index.html.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Smoke test
         run: npm run smoke

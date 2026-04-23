@@ -24,7 +24,10 @@ const STEPS = [
   { name: 'gen-tools-docs (check)', cmd: 'npm', args: ['run', 'gen-tools-docs', '--', '--check'] },
   { name: 'check-plugin',           cmd: 'npm', args: ['run', 'check-plugin'] },
   { name: 'build (tsc)',            cmd: 'npm', args: ['run', 'build'] },
-  { name: 'tests (vitest)',         cmd: 'npm', args: ['test'] },
+  // NOTE: if you change this invocation (flags, env, script name), also
+  // update the "Unit tests + coverage" step in .github/workflows/ci.yml —
+  // both places must stay in sync or CI and local will drift.
+  { name: 'tests + coverage',       cmd: 'npm', args: ['run', 'test:coverage'] },
   { name: 'smoke (MCP client)',     cmd: 'npm', args: ['run', 'smoke'] },
 ];
 

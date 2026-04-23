@@ -37,7 +37,7 @@ npm run gen-docs -- --check
 npm run gen-tools-docs -- --check
 npm run check-plugin
 npm run build
-npm test
+npm run test:coverage
 npm run smoke
 ```
 
@@ -319,6 +319,93 @@ restore-keys: hf-Xenova-bge-small-
 cache miss on every release run (~60s extra download). The `restore-keys`
 prefix `hf-Xenova-bge-small-` is intentionally broad so a key change still
 hits a warm partial cache for bge-small variants.
+
+---
+
+## Test coverage
+
+`npm run test:coverage` runs vitest with V8-provider coverage. Reports land
+in `coverage/` — open `coverage/index.html` for the per-file drill-down.
+The same invocation runs inside `npm run preflight` and inside
+`.github/workflows/ci.yml`, so the gate fires locally and in CI from the
+same entry point.
+
+### Gate shape
+
+- **Provider**: V8 (`@vitest/coverage-v8`). ~10% runtime overhead vs
+  Istanbul's 20–40%. Accurate enough for this codebase's imperative glue.
+- **Per-file** (`thresholds.perFile: true`). Every file must independently
+  meet the bar — global averages would let a 0%-covered new module sit
+  next to a 99%-covered existing module and pass unnoticed. The gate is
+  supposed to surface gaps, not hide them in averages.
+- **Anchor**: baseline-minimum minus 3pp (refactor tolerance). NOT an
+  aspirational target. Arbitrary "80%" thresholds invite coverage
+  theatre; anchoring to observed minimums catches regressions without
+  demanding a made-up number.
+- **Metrics gated**: `lines` + `branches`. `statements` ≈ `lines`,
+  `functions` tracks lines closely — gating all four over-constrains.
+- **Per-file overrides**: two, both documented inline in
+  `vitest.config.ts`:
+  - `src/cli/index.ts` — untested legacy CLI entrypoint, grandfathered
+    at 0/0 with a TODO to write CLI tests. Scoped to the specific file
+    (not `src/cli/**`) so any *new* file added under `src/cli/` fails
+    the gate and is surfaced as an untested module, which is the point.
+  - `src/server.ts` — subprocess-only code (signal handlers, stdin-EOF
+    shutdown, orderly teardown) is invisible to V8 coverage because
+    `test/integration/server-stdin-shutdown.test.ts` spawns a child
+    process that the parent's coverage instrumentation doesn't follow
+    into. The threshold here is a floor for the **in-process-tested
+    portion only** — not total coverage. Subprocess behaviour is
+    validated by the subprocess test itself, not by this gate. Full
+    rationale is in the `vitest.config.ts` inline comment.
+
+### Two discipline principles
+
+These are the rules that keep coverage-as-a-gate from becoming
+coverage-theatre. Both are worth naming separately because they're
+different failure modes:
+
+- **Forward discipline — new tests must actually assert behaviour.**
+  Don't write `expect(x).toBeDefined()`-style tests to trip the meter
+  for new code. A test that hits a line without asserting anything is
+  net-negative: it adds coverage (false confidence) without adding
+  protection. Tests are supposed to fail when the behaviour they
+  describe breaks. If a test can't fail, it's noise.
+- **Backward discipline — don't retrofit existing tests to raise
+  numbers.** If the coverage baseline surfaces an untested module, the
+  response is a follow-up PR that writes *real new tests* for that
+  gap — not assertion-pumping an existing `chunker.test.ts` until its
+  branch count goes up. The baseline tells you where the gaps are; the
+  gaps get filled by tests that assert real behaviour, in their own
+  commits, not by dilating unrelated tests.
+
+### Manual ratchet
+
+Every few releases, run `npm run test:coverage` and compare the per-file
+minimum against the current `thresholds.lines` / `thresholds.branches`
+in `vitest.config.ts`. If the minimum has shifted up meaningfully (5pp+),
+consider a small PR to raise the thresholds. No urgency — the gate's job
+is to catch regressions, not chase the maximum. If the minimum has
+*dropped*, investigate *why* before even thinking about lowering the
+threshold — the drop is the exact signal the gate was designed to surface.
+
+### Escape hatch
+
+If a legitimate refactor drops per-file coverage below threshold and
+blocks a PR, two paths:
+
+1. **Write the missing test** in the same PR. Usually the right answer
+   — the refactor moved or restructured code, and a small test addition
+   covers the new shape.
+2. **Adjust the threshold** in the same PR, with a commit message
+   explaining why the drop is intentional (e.g. "deleted dead code
+   path; coverage numerator shrank but denominator shrank less"). Rare
+   but legitimate.
+
+Adding a per-file override to `vitest.config.ts` is a third option but
+only legitimate for tooling-blind-spot cases like `src/server.ts` — not
+as a general "I'll write tests later" exemption. Every per-file override
+needs a rationale comment explaining what the number actually measures.
 
 ---
 
