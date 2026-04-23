@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { openDb, type DatabaseHandle } from '../../src/store/db.js';
+import { ensureEdgesTargetFragmentColumn, openDb, type DatabaseHandle } from '../../src/store/db.js';
 import { getNode } from '../../src/store/nodes.js';
 import { getEdgesBySource } from '../../src/store/edges.js';
 import { getAllCommunities } from '../../src/store/communities.js';
@@ -225,4 +225,112 @@ describe.sequential('IndexPipeline.indexSingleNote — forward-stub migration', 
     expect(after.some((e) => e.targetId === 'BMW.md')).toBe(true);
     expect(after.some((e) => e.targetId === '_stub/BMW.md')).toBe(false);
   }, 120_000);
+});
+
+/**
+ * v1.6.5 — heading / block-anchor stub lifecycle. The parser now splits
+ * `[[Target#Section]]` into a bare stub id (`_stub/Target.md`) + an edge
+ * fragment (`Section`), so forward-ref migration works the same for
+ * `[[X]]` and `[[X#Section]]`. A renamed target rewrites the link text
+ * with the suffix preserved, and the stored edge keeps pointing at the
+ * (renamed) real node.
+ */
+describe.sequential('IndexPipeline — heading/anchor stub lifecycle (v1.6.5)', () => {
+  let db: DatabaseHandle;
+  let embedder: Embedder;
+  let pipeline: IndexPipeline;
+  let tmpVault: string;
+
+  beforeAll(async () => {
+    db = openDb(':memory:');
+    embedder = new Embedder();
+    await embedder.init();
+    pipeline = new IndexPipeline(db, embedder);
+    tmpVault = mkdtempSync(join(tmpdir(), 'obsidian-brain-frag-'));
+  }, 120_000);
+
+  afterAll(async () => {
+    db.close();
+    await embedder.dispose();
+    rmSync(tmpVault, { recursive: true, force: true });
+  });
+
+  it('splits [[BMW#Specs]] into bare stub + target_fragment="Specs"', async () => {
+    writeFileSync(join(tmpVault, 'Cars.md'), '# Cars\n\nI drive a [[BMW#Specs]] model.\n');
+    await pipeline.index(tmpVault);
+
+    // Stub is BARE, not fragment-embedded.
+    expect(getNode(db, '_stub/BMW.md')).toBeDefined();
+    expect(getNode(db, '_stub/BMW#Specs.md')).toBeUndefined();
+
+    const edges = getEdgesBySource(db, 'Cars.md');
+    const edge = edges.find((e) => e.targetId === '_stub/BMW.md');
+    expect(edge).toBeDefined();
+    expect(edge?.targetFragment).toBe('Specs');
+  }, 120_000);
+
+  it('migrates the fragment stub to a real note when the target is created', async () => {
+    writeFileSync(join(tmpVault, 'BMW.md'), '# BMW\n\nReal note.\n');
+    await pipeline.index(tmpVault);
+
+    // Stub gone, edge retargeted at the real note, fragment preserved.
+    expect(getNode(db, '_stub/BMW.md')).toBeUndefined();
+    const edges = getEdgesBySource(db, 'Cars.md');
+    const edge = edges.find((e) => e.targetId === 'BMW.md');
+    expect(edge).toBeDefined();
+    expect(edge?.targetFragment).toBe('Specs');
+  }, 120_000);
+
+  it('handles block-reference anchors (^block) the same way', async () => {
+    writeFileSync(join(tmpVault, 'Notes.md'), '# Notes\n\nSee [[BMW^abc123]] for the block.\n');
+    await pipeline.index(tmpVault);
+
+    const edges = getEdgesBySource(db, 'Notes.md');
+    const edge = edges.find((e) => e.targetId === 'BMW.md');
+    expect(edge).toBeDefined();
+    expect(edge?.targetFragment).toBe('abc123');
+    // No fragment-embedded stub anywhere.
+    expect(getNode(db, '_stub/BMW^abc123.md')).toBeUndefined();
+  }, 120_000);
+});
+
+/**
+ * v1.6.5 — schema migration. An existing v3 DB (edges table without
+ * target_fragment column) upgrades in place on next bootstrap and is
+ * queryable afterwards without data loss.
+ */
+describe('ensureEdgesTargetFragmentColumn migration (v1.6.5)', () => {
+  it('adds the target_fragment column in-place on a v3 schema', () => {
+    const db = openDb(':memory:');
+    // Simulate a v3 DB: drop the v4 column so the pre-migration state is faithful.
+    db.exec('ALTER TABLE edges DROP COLUMN target_fragment');
+
+    // Existing data without target_fragment.
+    db.prepare(
+      "INSERT INTO nodes (id, title, content, frontmatter) VALUES ('a.md', 'A', 'x', '{}')",
+    ).run();
+    db.prepare(
+      "INSERT INTO nodes (id, title, content, frontmatter) VALUES ('b.md', 'B', 'x', '{}')",
+    ).run();
+    db.prepare(
+      "INSERT INTO edges (source_id, target_id, context) VALUES ('a.md', 'b.md', 'link')",
+    ).run();
+
+    // Run the migration. Idempotent — second call is a no-op.
+    ensureEdgesTargetFragmentColumn(db);
+    ensureEdgesTargetFragmentColumn(db);
+
+    const cols = db
+      .prepare("PRAGMA table_info('edges')")
+      .all() as Array<{ name: string }>;
+    expect(cols.map((c) => c.name)).toContain('target_fragment');
+
+    // Existing row survived with target_fragment = NULL.
+    const row = db
+      .prepare('SELECT source_id, target_id, target_fragment FROM edges LIMIT 1')
+      .get() as { source_id: string; target_id: string; target_fragment: string | null };
+    expect(row).toEqual({ source_id: 'a.md', target_id: 'b.md', target_fragment: null });
+
+    db.close();
+  });
 });

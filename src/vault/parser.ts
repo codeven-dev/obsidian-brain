@@ -64,8 +64,18 @@ export function parseFileFromContent(
   const paragraphs = content.split(/\n\n+/);
 
   for (const link of links) {
-    const targetId = resolveLink(link.raw, stemLookup, allPathsSet);
-    const resolvedTarget = targetId ?? `_stub/${link.raw}.md`;
+    // Split heading (#) / block-reference (^) suffix from the raw link so
+    // only the bare stem is used for resolution + stub id. The fragment
+    // rides alongside on the edge row (schema v4 addition). Without this
+    // split, `[[BMW#Specs]]` would create `_stub/BMW#Specs.md` and never
+    // migrate when `BMW.md` appears, since `resolveForwardStubs` skips
+    // anything with `#` / `^` in the stub id.
+    const hashIdx = link.raw.search(/[#^]/);
+    const bareRaw = hashIdx === -1 ? link.raw : link.raw.slice(0, hashIdx);
+    const fragment = hashIdx === -1 ? null : link.raw.slice(hashIdx + 1);
+
+    const targetId = resolveLink(bareRaw, stemLookup, allPathsSet);
+    const resolvedTarget = targetId ?? `_stub/${bareRaw}.md`;
 
     if (!targetId) {
       stubIds.add(resolvedTarget);
@@ -103,6 +113,7 @@ export function parseFileFromContent(
       sourceId: relPath,
       targetId: resolvedTarget,
       context,
+      targetFragment: fragment,
     });
   }
 

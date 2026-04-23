@@ -28,12 +28,16 @@ const DEFAULT_EMBEDDING_DIM = 384;
  *     nodes_fts to `porter unicode61` tokenize.
  * v3: v1.5.1 — adds `embedder_prefix_strategy` metadata key for stratified
  *     BGE/E5 prefix migration; fixes dead schema_version branch.
+ * v4: v1.6.5 — adds `edges.target_fragment` TEXT column. Heading / block
+ *     anchor stubs (`[[X#Section]]`, `[[X^block]]`) now store the bare
+ *     target id on `target_id` and the suffix on `target_fragment`, so
+ *     `resolveForwardStubs` can migrate them like any other forward-ref.
  *
  * Known `index_metadata` keys:
  *   embedding_model, embedding_dim, schema_version, embedder_provider,
  *   embedder_prefix_strategy
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Open a SQLite database at `dbPath`, enable WAL mode, load the sqlite-vec
@@ -65,7 +69,8 @@ export function initSchema(db: DatabaseHandle): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source_id TEXT NOT NULL,
       target_id TEXT NOT NULL,
-      context TEXT NOT NULL DEFAULT ''
+      context TEXT NOT NULL DEFAULT '',
+      target_fragment TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
@@ -234,4 +239,18 @@ export function rebuildFullTextIndex(db: DatabaseHandle): void {
 /** Return the current stored FTS tokenize clause, or null if absent. */
 export function currentFtsTokenize(db: DatabaseHandle): string | null {
   return readFtsTokenize(db, 'nodes_fts');
+}
+
+/**
+ * Idempotent in-place migration: ensure `edges.target_fragment` exists
+ * (schema v4 addition). Safe to call on any schema version — if the
+ * column already exists the ALTER is skipped.
+ */
+export function ensureEdgesTargetFragmentColumn(db: DatabaseHandle): void {
+  const cols = db
+    .prepare("PRAGMA table_info('edges')")
+    .all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === 'target_fragment')) {
+    db.exec('ALTER TABLE edges ADD COLUMN target_fragment TEXT');
+  }
 }

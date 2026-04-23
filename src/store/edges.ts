@@ -1,16 +1,24 @@
 import type { DatabaseHandle } from './db.js';
 import type { ParsedEdge } from '../types.js';
 
-type EdgeRow = { id: number; source_id: string; target_id: string; context: string };
+type EdgeRow = {
+  id: number;
+  source_id: string;
+  target_id: string;
+  context: string;
+  target_fragment: string | null;
+};
 
 /**
  * Append an edge. Edges are never de-duplicated by (source, target, context);
- * the graph layer handles any collapsing.
+ * the graph layer handles any collapsing. `targetFragment` captures a `#heading`
+ * or `^block` suffix from a wiki-link (without the `#` / `^` itself) — null
+ * for bare references.
  */
 export function insertEdge(db: DatabaseHandle, edge: ParsedEdge): void {
   db.prepare(
-    'INSERT INTO edges (source_id, target_id, context) VALUES (?, ?, ?)'
-  ).run(edge.sourceId, edge.targetId, edge.context);
+    'INSERT INTO edges (source_id, target_id, context, target_fragment) VALUES (?, ?, ?, ?)'
+  ).run(edge.sourceId, edge.targetId, edge.context, edge.targetFragment ?? null);
 }
 
 /**
@@ -21,7 +29,7 @@ export function getEdgesBySource(
   nodeId: string
 ): Array<ParsedEdge & { id: number }> {
   return db
-    .prepare('SELECT id, source_id, target_id, context FROM edges WHERE source_id = ?')
+    .prepare('SELECT id, source_id, target_id, context, target_fragment FROM edges WHERE source_id = ?')
     .all(nodeId)
     .map((r) => {
       const row = r as EdgeRow;
@@ -30,6 +38,7 @@ export function getEdgesBySource(
         sourceId: row.source_id,
         targetId: row.target_id,
         context: row.context,
+        targetFragment: row.target_fragment,
       };
     });
 }
@@ -42,7 +51,7 @@ export function getEdgesByTarget(
   nodeId: string
 ): Array<ParsedEdge & { id: number }> {
   return db
-    .prepare('SELECT id, source_id, target_id, context FROM edges WHERE target_id = ?')
+    .prepare('SELECT id, source_id, target_id, context, target_fragment FROM edges WHERE target_id = ?')
     .all(nodeId)
     .map((r) => {
       const row = r as EdgeRow;
@@ -51,6 +60,7 @@ export function getEdgesByTarget(
         sourceId: row.source_id,
         targetId: row.target_id,
         context: row.context,
+        targetFragment: row.target_fragment,
       };
     });
 }

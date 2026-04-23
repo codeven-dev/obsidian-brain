@@ -291,8 +291,12 @@ export class IndexPipeline {
       .all() as Array<{ id: string }>;
 
     for (const { id: stubId } of rows) {
-      // Only migrate bare-stem stubs. Heading/anchor stubs (containing # or ^)
-      // are a separate architectural question deferred to v1.7.0.
+      // Stub ids no longer contain `#` or `^` as of v1.6.5 — the parser
+      // splits heading/anchor suffixes onto `edge.target_fragment` before
+      // building the stub id. Legacy fragment-embedded stubs (pre-v1.6.5)
+      // still exist in upgraded databases until the post-migration
+      // reindex runs, so skip them here; `pruneAllOrphanStubs` cleans
+      // them up once their inbound edges are rewritten.
       const raw = stubId.replace(/^_stub\//, '').replace(/\.md$/, '');
       if (raw.includes('#') || raw.includes('^')) continue;
 

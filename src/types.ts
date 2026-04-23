@@ -7,8 +7,9 @@ export interface ParsedNode {
 
 export interface ParsedEdge {
   sourceId: string;
-  targetId: string;     // resolved path
+  targetId: string;     // resolved path (bare — no #heading or ^block)
   context: string;      // enclosing paragraph
+  targetFragment?: string | null; // #heading or ^block suffix, without the `#`/`^` itself
 }
 
 export interface StoredNode extends ParsedNode {

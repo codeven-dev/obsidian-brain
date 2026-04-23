@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseHandle } from '../store/db.js';
 import {
   dropEmbeddingState,
+  ensureEdgesTargetFragmentColumn,
   ensureVecTables,
   rebuildFullTextIndex,
   currentFtsTokenize,
