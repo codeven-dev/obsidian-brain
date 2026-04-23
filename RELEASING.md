@@ -176,8 +176,9 @@ Typical cases:
 5. **Runs `npm run preflight`** (unless `--skip-preflight`). Mirrors `ci.yml`:
    build + tests + smoke + docs + generated-docs drift + spell check. If
    anything is red, promote aborts before touching main.
-6. **Resolves the target commit** (the provided ref, or dev HEAD if none).
-   Validates the target is reachable from dev.
+6. **Resolves the target commit** (required — the script exits 1 if no SHA
+   is passed, so you don't accidentally ship all of dev). Validates the
+   target is reachable from dev.
 7. **Computes pending commits** via `git cherry origin/main <target>`. Commits
    reachable from `<target>` that are not patch-id-equivalent to anything
    already on main get a `+` and are queued for cherry-picking. Commits
@@ -522,11 +523,10 @@ Zod refactor will close it). For now, the PR template checklist is the guard.
 
 ## Rollback
 
-### Forgot the merge-back to `dev`
+### Dev's `package.json` looks out of sync
 
-Not a rollback — just a sync. If `dev` still shows the old version after a
-release, see "Why does dev's `package.json` only bump after the release?"
-above. One-liner: `git checkout dev && git pull origin main && git push origin dev`.
+Not a rollback — expected lag. See "Dev's `package.json` lags main's releases"
+above. Sync optional via the one-liner in that section.
 
 ### Tag not yet picked up by CI (fastest path)
 
@@ -535,12 +535,12 @@ git tag -d vX.Y.Z
 git push origin :refs/tags/vX.Y.Z
 ```
 
-Fix the issue, then re-run `npm run promote`.
+Fix the issue on dev, then re-run `npm run promote -- <target-sha>`.
 
 ### CI already fired but npm publish failed
 
 Delete the tag as above. No npm action needed — the package was never published.
-Re-run `npm run promote` once the issue is fixed.
+Re-run `npm run promote -- <target-sha>` once the issue is fixed.
 
 ### npm package already published
 
@@ -551,8 +551,9 @@ after 72 hours, and even within 72 hours it breaks downstream caches). Instead:
 npm deprecate obsidian-brain@vX.Y.Z "reason for deprecation"
 ```
 
-Then release a follow-up patch (`npm run promote`) with the fix. Users on
-`npx obsidian-brain@latest` will automatically get the patched version.
+Then release a follow-up patch (`npm run promote -- <new-target-sha>`) with the
+fix. Users on `npx obsidian-brain@latest` will automatically get the patched
+version.
 
 If the MCP Registry also published, the follow-up patch release will overwrite
 `latest` there too — no manual action needed.
