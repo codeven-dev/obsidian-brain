@@ -46,6 +46,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "tsx scripts/mcp-smoke.ts",
+    "docs": "cd website && mkdocs serve --dev-addr 127.0.0.1:8000",
+    "docs:build": "cd website && mkdocs build --strict",
     "prepublishOnly": "npm run build",
     "version": "node scripts/sync-server-version.mjs && git add server.json",
     "postversion": "git push --follow-tags"
