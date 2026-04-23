@@ -384,23 +384,41 @@ These were never pushed to `origin`. Safe to delete any time.
 
 GitHub rulesets enforce these invariants server-side. Re-apply any time via
 `npm run setup:protection` (idempotent — re-running updates existing rulesets
-in place rather than duplicating them):
+in place by name rather than duplicating them).
 
-### `main` — ruleset `obsidian-brain/main`
+Two rulesets on `main`, one on `dev`. The split exists because GitHub's bypass
+actors operate at ruleset granularity, not per-rule: anyone who can bypass a
+ruleset bypasses every rule inside it. We want admin to bypass the CI check
+(so `promote` can push bump commits) but NOT bypass force-push protection.
+Hence two rulesets — one with zero bypass, one with admin bypass.
 
-- **Force-push blocked** (`non_fast_forward`). Nothing can rewrite main's
-  history. `git push --force origin main` and `git push --force-with-lease
-  origin main` both fail server-side.
+### `main` (hard rules) — ruleset `obsidian-brain/main`
+
+Nobody bypasses. Not even you.
+
+- **Force-push blocked** (`non_fast_forward`). `git push --force origin main`
+  and `git push --force-with-lease origin main` both fail server-side.
 - **Deletion blocked** (`deletion`). `git push origin :main` fails.
-- **Linear history required** (`required_linear_history`). No merge commits
-  on main. Works because `promote` uses `git merge --ff-only` — the workflow
-  naturally produces linear history. Blocks the footgun of running
-  `git merge dev` (without `--ff-only`) and landing a merge commit.
 
-These three together give the "can't push to main except via a clean FF from
-dev" guarantee you asked for. Combined with the fact that `promote` only runs
-from dev, there's no safe path to land code on main that didn't come through
-dev first.
+### `main` (workflow rules) — ruleset `obsidian-brain/main-workflow`
+
+Admin (repo role 5) can bypass all rules here via `bypass_mode: always`.
+Non-admins (Dependabot, future contributors) cannot.
+
+- **Linear history required** (`required_linear_history`). No merge commits
+  on main. `promote` uses `git merge --ff-only` throughout so it satisfies
+  this naturally. Blocks the footgun of `git merge dev` without `--ff-only`
+  landing a merge commit.
+- **CI must pass** (`required_status_checks` on context `Build, test, smoke,
+  docs`). PRs cannot merge to main unless the CI workflow succeeds on the
+  PR's head commit. Dependabot PRs are the primary beneficiary — any update
+  that breaks the build, tests, smoke, or docs is caught here.
+
+Why admin bypass: `promote` creates a bump commit locally via `npm version`
+and pushes it directly to main. That commit has never been through CI at
+push time, so without bypass the required-status-checks rule would block
+the push. The bypass lets the admin push go through. Dependabot (non-admin)
+still has to pass CI the normal way.
 
 ### `dev` — ruleset `obsidian-brain/dev`
 
@@ -409,33 +427,45 @@ dev first.
   `promote` rebases dev onto main and force-pushes with `--force-with-lease`.
   Blocking force-push here would break that flow.
 
-### Not enforced (yet) — required CI check
+### Defense in depth — why these give you what you asked for
 
-Once CI is green consistently on dev, add a "Require status checks to pass"
-rule to the main ruleset so Dependabot PRs can't merge with red CI. Setup:
-
-1. GitHub → Settings → Rules → Rulesets → `obsidian-brain/main` → Edit.
-2. Add rule → "Require status checks to pass".
-3. Pick `Build, test, smoke, docs` from the Actions dropdown.
-4. (Optional) Tick "Require branches to be up to date before merging".
-
-Don't turn this on while CI is failing — it blocks every PR, including
-harmless doc-typo fixes.
+- **"Block force-pushing main"**: `non_fast_forward` in the hard ruleset, no
+  bypass. Nobody can rewrite main's history — not even with admin credentials.
+- **"Stop pushing to main if it's not on dev first"**: `required_linear_history`
+  (workflow ruleset) combined with the `promote` workflow's `git merge --ff-only
+  dev` step. Any commit landing on main must FF from somewhere; the only
+  sanctioned path is from dev via `promote`.
+- **"Stop it if tests don't pass"**: `required_status_checks` (workflow
+  ruleset) — Dependabot and contributor PRs need green CI to merge. Admin
+  can override for `promote`'s direct push since that bump commit hasn't
+  been CI'd yet (the trade-off you take to keep promote one command).
 
 ### Emergency escape hatch
 
-If a ruleset ever locks you out of a legitimate operation (rare, but
-possible with future rules), temporarily disable it:
+If a ruleset ever locks you out of a legitimate operation:
 
 ```bash
-# disable the main ruleset
+# Disable one ruleset temporarily (replace NAME):
 gh api --method PUT repos/sweir1/obsidian-brain/rulesets/$(
-  gh api repos/sweir1/obsidian-brain/rulesets --jq '.[] | select(.name=="obsidian-brain/main") | .id'
+  gh api repos/sweir1/obsidian-brain/rulesets \
+    --jq '.[] | select(.name=="obsidian-brain/NAME") | .id'
 ) -f enforcement=disabled
 
-# do the operation, then re-enable:
+# Do the operation, then re-enable by re-running the setup:
 npm run setup:protection
 ```
+
+### If CI breaks (temporary)
+
+If CI becomes chronically red for reasons unrelated to the PR being merged
+(e.g. HuggingFace model hosting outage), you can temporarily drop the
+required-CI rule and keep everything else:
+
+```bash
+npm run setup:protection -- --no-ci-check
+```
+
+Then re-apply with `npm run setup:protection` once CI stabilises.
 
 ---
 

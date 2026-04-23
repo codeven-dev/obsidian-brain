@@ -1,94 +1,124 @@
 #!/usr/bin/env node
 /**
- * setup-branch-protection.mjs — apply GitHub rulesets to `main` and `dev`.
+ * setup-branch-protection.mjs — apply GitHub rulesets to main and dev.
  *
- * Idempotent: re-run safely. If a ruleset with the same name already exists,
- * it is updated in place rather than duplicated.
+ * Idempotent: re-run safely. Rulesets are looked up by name and updated in
+ * place rather than duplicated.
  *
- * Applied rules:
+ * Design: two rulesets on main, one on dev.
  *
- *   main (ruleset "obsidian-brain/main"):
- *     - Block force-push              (non_fast_forward)
- *     - Block deletion                (deletion)
- *     - Require linear history        (required_linear_history)
+ *   obsidian-brain/main (hard rules — nobody bypasses, including admin):
+ *     - Block force-push         (non_fast_forward)
+ *     - Block deletion           (deletion)
  *
- *   dev (ruleset "obsidian-brain/dev"):
- *     - Block deletion                (deletion)
- *     (Force-push is intentionally allowed — the cherry-pick branch of
- *     `npm run promote` uses `git push --force-with-lease origin dev` after
- *     rebasing dev onto main. Blocking it would break that flow.)
+ *   obsidian-brain/main-workflow (workflow rules — admin can bypass):
+ *     - Require linear history   (required_linear_history)
+ *     - Require CI to pass       (required_status_checks: "Build, test, smoke, docs")
  *
- * Not yet applied — add manually via the GitHub UI once CI on dev goes green:
+ *     Admin bypass is required so `npm run promote` can push its bump
+ *     commit to main without waiting for CI. The bump commit is created
+ *     locally by `npm version X` and has no CI run at push time; without
+ *     bypass, the required-status-checks rule would block it. Dependabot
+ *     and future contributors (non-admin) still must pass CI to merge.
  *
- *   - Required status check: "Build, test, smoke, docs" must pass before PRs
- *     can merge to main. Adding it while CI is red would block every PR.
- *     Settings → Rules → obsidian-brain/main → Add rule → Require status
- *     checks to pass → pick "Build, test, smoke, docs" from the dropdown.
+ *   obsidian-brain/dev:
+ *     - Block deletion
+ *     (Force-push intentionally allowed — the cherry-pick branch of
+ *     `npm run promote` rebases dev onto main and uses --force-with-lease.)
+ *
+ * Required status check context:  "Build, test, smoke, docs"
+ *   This is the `name:` of the sole job in .github/workflows/ci.yml. If that
+ *   job is ever renamed, update this script and re-run `npm run setup:protection`.
  *
  * Usage:
  *   npm run setup:protection
- *   npm run setup:protection -- --dry-run    # print the API calls, don't send
+ *   npm run setup:protection -- --dry-run       # print the API calls, don't send
+ *   npm run setup:protection -- --no-ci-check   # omit required-CI rule (for red-CI periods)
  *
  * Requires: `gh` CLI authenticated as a repo admin.
  */
 import { execSync } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const REPO = 'sweir1/obsidian-brain';
 const DRY = process.argv.includes('--dry-run');
+const SKIP_CI = process.argv.includes('--no-ci-check');
 
-/** Shell out with inherited stdio (for dry-run printing). */
+/** Role ID 5 = admin in GitHub's RepositoryRole enum. */
+const ADMIN_BYPASS = [
+  { actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' },
+];
+
 function run(cmd) {
   if (DRY) {
     console.log(`[dry-run] ${cmd}`);
     return '';
   }
-  return execSync(cmd, { encoding: 'utf8' });
+  return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] });
 }
 
-/** POST or PUT a ruleset JSON via `gh api`. Idempotent: looks up existing by name. */
 function upsertRuleset(ruleset) {
   const name = ruleset.name;
-  // Look up existing ruleset by name
   const existing = JSON.parse(
     execSync(`gh api repos/${REPO}/rulesets`, { encoding: 'utf8' }),
   );
   const match = existing.find((r) => r.name === name);
 
-  const body = JSON.stringify(ruleset);
-  // Write to tempfile — gh api prefers file input for complex bodies
-  const tmp = `/tmp/ruleset-${Date.now()}.json`;
-  execSync(`cat > ${tmp} <<'EOF'\n${body}\nEOF`);
+  const tmp = join(tmpdir(), `ruleset-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  writeFileSync(tmp, JSON.stringify(ruleset));
 
-  if (match) {
-    console.log(`updating existing ruleset "${name}" (id ${match.id})`);
-    run(
-      `gh api --method PUT repos/${REPO}/rulesets/${match.id} --input ${tmp}`,
-    );
-  } else {
-    console.log(`creating new ruleset "${name}"`);
-    run(
-      `gh api --method POST repos/${REPO}/rulesets --input ${tmp}`,
-    );
+  try {
+    if (match) {
+      console.log(`updating existing ruleset "${name}" (id ${match.id})`);
+      run(`gh api --method PUT repos/${REPO}/rulesets/${match.id} --input ${tmp}`);
+    } else {
+      console.log(`creating new ruleset "${name}"`);
+      run(`gh api --method POST repos/${REPO}/rulesets --input ${tmp}`);
+    }
+  } finally {
+    try { unlinkSync(tmp); } catch {}
   }
-
-  execSync(`rm -f ${tmp}`);
 }
 
-const mainRuleset = {
+const mainHardRuleset = {
   name: 'obsidian-brain/main',
   target: 'branch',
   enforcement: 'active',
   conditions: {
-    ref_name: {
-      include: ['refs/heads/main'],
-      exclude: [],
-    },
+    ref_name: { include: ['refs/heads/main'], exclude: [] },
   },
   rules: [
-    { type: 'non_fast_forward' }, // blocks force pushes
+    { type: 'non_fast_forward' },
     { type: 'deletion' },
-    { type: 'required_linear_history' },
   ],
+};
+
+const mainWorkflowRules = [
+  { type: 'required_linear_history' },
+];
+if (!SKIP_CI) {
+  mainWorkflowRules.push({
+    type: 'required_status_checks',
+    parameters: {
+      required_status_checks: [
+        { context: 'Build, test, smoke, docs' },
+      ],
+      strict_required_status_checks_policy: false,
+    },
+  });
+}
+
+const mainWorkflowRuleset = {
+  name: 'obsidian-brain/main-workflow',
+  target: 'branch',
+  enforcement: 'active',
+  bypass_actors: ADMIN_BYPASS,
+  conditions: {
+    ref_name: { include: ['refs/heads/main'], exclude: [] },
+  },
+  rules: mainWorkflowRules,
 };
 
 const devRuleset = {
@@ -96,29 +126,34 @@ const devRuleset = {
   target: 'branch',
   enforcement: 'active',
   conditions: {
-    ref_name: {
-      include: ['refs/heads/dev'],
-      exclude: [],
-    },
+    ref_name: { include: ['refs/heads/dev'], exclude: [] },
   },
   rules: [
     { type: 'deletion' },
   ],
 };
 
-console.log(`setup-branch-protection: target repo = ${REPO}${DRY ? ' (DRY RUN)' : ''}\n`);
-upsertRuleset(mainRuleset);
+console.log(`setup-branch-protection: target repo = ${REPO}${DRY ? ' (DRY RUN)' : ''}${SKIP_CI ? ' (SKIP CI CHECK)' : ''}\n`);
+upsertRuleset(mainHardRuleset);
+upsertRuleset(mainWorkflowRuleset);
 upsertRuleset(devRuleset);
 
 console.log(`
 setup-branch-protection: done.
 
 Applied:
-  - main: block force-push, block deletion, require linear history
-  - dev:  block deletion (force-push allowed for cherry-pick promote rebase)
+  main (hard):     block force-push, block deletion
+                   — no bypass; admin cannot override
+  main (workflow): require linear history${SKIP_CI ? '' : ', require CI "Build, test, smoke, docs" to pass'}
+                   — admin bypasses so \`npm run promote\` works
+  dev:             block deletion
+                   — force-push allowed for promote's cherry-pick rebase
 
-To add "required CI check" later (once CI is green on dev):
-  GitHub UI → Settings → Rules → obsidian-brain/main → Add rule
-     → Require status checks to pass
-     → Pick "Build, test, smoke, docs" from the Actions dropdown.
+Verify at: https://github.com/${REPO}/settings/rules
+
+Rollback a specific ruleset:
+  gh api --method DELETE repos/${REPO}/rulesets/<id>
+
+Disable temporarily (for emergencies):
+  gh api --method PUT repos/${REPO}/rulesets/<id> -f enforcement=disabled
 `);
