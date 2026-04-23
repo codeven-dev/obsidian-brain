@@ -88,27 +88,24 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Prefetch embedding models (with retries + corruption recovery)
+        # Runs BEFORE vitest so flaky HF downloads can't surface as opaque
+        # Protobuf-parsing errors inside a failing test suite. The script:
+        #   - checks for 0-byte / suspiciously-small ONNX files restored
+        #     from a prior cache and wipes them pre-emptively
+        #   - retries up to 4 times per model with exponential backoff
+        #   - on any Protobuf / ONNX / "Unable to get model file" error,
+        #     wipes the model's cache subdir and tries again with a fresh
+        #     download
+        #   - exits non-zero with a clear message if all retries fail,
+        #     instead of letting vitest surface a cryptic stack trace
+        #
+        # This warms the cache deterministically so vitest just reads from
+        # disk — no parallel-download races between test files.
+        run: node scripts/prefetch-test-models.mjs
+
       - name: Unit tests
-        # If tests fail with a Protobuf-parsing or corrupt-ONNX error, the
-        # restored cache probably contains a partially-downloaded model from
-        # a killed prior run. The logic below captures the first-pass log,
-        # inspects it for the known corruption signatures, wipes the HF
-        # cache, and retries exactly once.
-        run: |
-          set +e
-          npm test 2>&1 | tee /tmp/test-output.log
-          test_exit=${PIPESTATUS[0]}
-          set -e
-          if [ $test_exit -ne 0 ]; then
-            if grep -qE 'Protobuf parsing failed|Load model .* failed|ONNX' /tmp/test-output.log; then
-              echo "::warning::First-pass test failure looks like a corrupt HF cache. Wiping ${TRANSFORMERS_CACHE} and retrying once."
-              rm -rf "${TRANSFORMERS_CACHE}" || true
-              npm test
-            else
-              echo "::error::Tests failed for a reason unrelated to the HF cache — not retrying."
-              exit $test_exit
-            fi
-          fi
+        run: npm test
 
       - name: Smoke test
         run: npm run smoke
