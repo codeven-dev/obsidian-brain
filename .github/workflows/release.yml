@@ -56,6 +56,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Need enough history to prove the tag descends from main. The
+          # default shallow clone (depth=1) can't answer `is-ancestor`.
+          fetch-depth: 0
+
+      - name: Refuse to publish tags that aren't on main
+        # Defense-in-depth for the dev-branch + cherry-pick workflow:
+        # `npm version patch` has a `postversion` lifecycle that auto-pushes
+        # the tag, and a tag push fires this workflow regardless of which
+        # branch the tag was created on. If the user runs `npm version` on
+        # `dev` by muscle memory, without this guard we'd publish `dev`
+        # state to npm + the MCP Registry. Refuse explicitly.
+        #
+        # For workflow_dispatch (manual publish) we skip the check — the
+        # caller knows what they're doing and explicitly opted in.
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main --depth=200
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME is at commit $GITHUB_SHA, which is NOT on origin/main."
+            echo "::error::Releases must be cut from main. If this tag came from dev, delete it (\`git tag -d $GITHUB_REF_NAME && git push origin :refs/tags/$GITHUB_REF_NAME\`), cherry-pick the commit to main, then run \`npm version patch\` from main."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME commit $GITHUB_SHA is on main ✓"
 
       - name: Resolve version
         id: ver
