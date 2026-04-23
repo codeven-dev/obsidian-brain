@@ -1,0 +1,75 @@
+# pr.yml — CI for every pull request targeting main or dev.
+#
+# What this workflow catches:
+#   - Build failures (TypeScript compile errors)
+#   - Smoke-test regressions (MCP handshake + every registered tool)
+#   - Docs build failures (mkdocs strict mode — broken links, bad refs)
+#   - Generated-docs drift (configuration.md / tools.md out of sync with
+#     server.json / Zod schemas) once Phase 2 / Phase 3 scripts land
+#   - Typos in docs and key markdown files (codespell)
+#
+# Concurrency: re-pushes to the same PR cancel older in-flight runs.
+
+name: PR
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build, smoke, docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test
+        run: npm run smoke
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: website/requirements.txt
+
+      - name: Install Python deps
+        run: pip install -r website/requirements.txt
+
+      - name: Docs build (strict)
+        run: npm run docs:build
+
+      - name: Generated-docs drift check
+        run: |
+          set -e
+          if [ -f scripts/gen-docs.mjs ]; then
+            npm run gen-docs -- --check
+          fi
+          if [ -f scripts/gen-tools-docs.mjs ]; then
+            npm run gen-tools-docs -- --check
+          fi
+
+      - name: Spell check
+        run: |
+          pip install codespell
+          codespell docs/ README.md RELEASING.md --skip="*.json,*.lock"
