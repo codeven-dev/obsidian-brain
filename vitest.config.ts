@@ -33,52 +33,88 @@ export default defineConfig({
       all: true,
       include: ['src/**/*.ts'],
       exclude: [
-        'src/types.ts',
+        // Type-only files. No runtime code, always 0% by construction.
+        // Glob covers future type-dump files anywhere under src/.
+        '**/types.ts',
         '**/*.d.ts',
+
+        // ---- Grandfathered-from-coverage files ----
+        //
+        // Note on the mechanism: in vitest 4, global `thresholds.lines` /
+        // `thresholds.branches` apply to every file regardless of any
+        // per-path threshold overrides (see vitest source comment:
+        // "Global threshold is for all files, even if they are included
+        // by glob patterns"). Per-path overrides can only ADD thresholds,
+        // not remove them. The only way to exempt a specific file from
+        // the global threshold is to exclude it from coverage entirely.
+        //
+        // This list surfaces the gaps explicitly: each entry names a file
+        // that IS currently untested (or untestable at unit level with
+        // existing infrastructure) and SHOULD have tests. Removing an
+        // entry requires writing the test first and confirming the file
+        // clears the global floor. See RELEASING.md → "Test coverage"
+        // for the discipline principles.
+
+        // All grandfather excludes use `**/`-prefixed globs so they're
+        // portable regardless of how the path is normalized internally
+        // (absolute vs relative, cwd differences between local and CI).
+        // Bare paths CAN work but are fragile to internal path handling
+        // changes between vitest versions; the wildcard form is robust.
+
+        // Untested legacy CLI entrypoint. No test/cli/ exists.
+        // TODO: write test/cli/index.test.ts, remove this exclusion.
+        '**/src/cli/index.ts',
+
+        // Subprocess blind spot — V8 coverage does NOT follow into child
+        // processes. Signal handlers, main-entry guards, stdin-EOF shutdown
+        // (v1.6.8), and orderly-native-teardown code in src/server.ts are
+        // exercised ONLY by test/integration/server-stdin-shutdown.test.ts,
+        // which spawns a real subprocess. Those lines are always reported
+        // as uncovered regardless of whether they're actually tested.
+        // Coverage is the wrong instrument for this file's correctness —
+        // the subprocess test IS the gate for this code. If the file is
+        // ever refactored so a meaningful portion becomes in-process
+        // testable, remove this exclusion and set a real threshold.
+        '**/src/server.ts',
+
+        // Watcher — genuinely untested. No test/pipeline/watcher.test.ts
+        // exists. Real gap surfaced by baseline.
+        // TODO: write test/pipeline/watcher.test.ts, remove exclusion.
+        '**/src/pipeline/watcher.ts',
+
+        // Plugin-dependent tools. These only work when the Obsidian
+        // companion plugin is running (server talks to it over localhost
+        // HTTP). Meaningful unit tests require mocking the plugin HTTP
+        // contract, which nobody's written yet.
+        // TODO: add mocked plugin HTTP contract helper, write per-tool
+        // unit tests, remove each exclusion individually as tests land.
+        '**/src/tools/active-note.ts',
+        '**/src/tools/base-query.ts',
+        '**/src/tools/dataview-query.ts',
+
+        // Surprisingly untested — test/graph/pathfinding.test.ts covers
+        // the underlying graph primitive but the tool wrapper itself has
+        // no direct test. Mirror test/tools/rank-notes.test.ts pattern.
+        // TODO: write test/tools/find-path-between.test.ts, remove exclusion.
+        '**/src/tools/find-path-between.ts',
       ],
       thresholds: {
         perFile: true,
-        // TODO(commit 2): set to per-file-minimum − 3pp after baseline run.
-        // These 0/0 placeholders ship with commit 1 so CI stays green while
-        // the baseline measurement happens. See RELEASING.md → "Test coverage".
-        lines: 0,
-        branches: 0,
-
-        // Grandfather the currently-untested CLI entrypoint. Scoped to the
-        // specific file — NOT `src/cli/**` — so any NEW file added under
-        // src/cli/ later fails the gate and surfaces as an untested module,
-        // which is exactly what the gate exists to catch. Remove this
-        // override when src/cli/index.ts gets real unit tests in a follow-up PR.
-        'src/cli/index.ts': {
-          lines: 0,
-          branches: 0,
-        },
-
-        // Pre-empted override for commit 2 — DO NOT enable in commit 1.
+        // Baseline-anchored (see RELEASING.md → "Test coverage"). Floor is
+        // per-file-minimum among NON-EXCLUDED files, minus 3pp for
+        // refactor tolerance:
+        //   - lines 60.8 (src/context.ts) - 3 ≈ 57
+        //   - branches 40.0 (src/tools/link-notes.ts, edit-note.ts) - 3 ≈ 37
         //
-        // RATIONALE — what the number for this file actually measures:
-        //   V8 coverage does not follow into child processes. Signal
-        //   handlers, main-entry guards, and process-lifetime code in
-        //   src/server.ts are exercised ONLY by
-        //   test/integration/server-stdin-shutdown.test.ts, which spawns
-        //   a real subprocess. Those lines are always reported as
-        //   uncovered regardless of whether they're actually tested.
+        // Manual ratchet: raise these in a small PR when baseline minimums
+        // shift up meaningfully (5pp+). Never autoUpdate — see why-not
+        // in the approved plan.
         //
-        //   Therefore: the reported coverage for this file is in-process-
-        //   test coverage only. The threshold here is a floor for THAT
-        //   subset — a regression means an in-process-testable line lost
-        //   coverage, which IS actionable.
-        //
-        //   The subprocess-only code is validated separately and its
-        //   correctness is NOT gated by this number. If this file's
-        //   reported coverage drops, the question is "what in-process-
-        //   tested path lost coverage" — not "did we break a signal
-        //   handler."
-        //
-        // 'src/server.ts': {
-        //   lines: <set in commit 2 after baseline measurement>,
-        //   branches: <set in commit 2 after baseline measurement>,
-        // },
+        // Grandfather files that can't meet this floor via `exclude`
+        // above, not via per-path thresholds (which don't replace the
+        // global — see comment on the exclude list).
+        lines: 57,
+        branches: 37,
       },
     },
   },
