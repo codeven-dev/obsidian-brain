@@ -1,8 +1,3 @@
----
-title: obsidian-brain
-description: Local MCP server: semantic search, knowledge graph, and vault editing over an Obsidian vault.
----
-
 # obsidian-brain
 
 A local MCP server that gives Claude (and any MCP client) **semantic search**, a **live knowledge graph**, and **vault editing** over an Obsidian vault. Stdio-only, no cloud, nothing hosted.
