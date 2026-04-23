@@ -133,15 +133,34 @@ export async function startServer(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  // Exit when the MCP client disconnects — for stdio transport, the client
-  // closing its end of the pipe IS the normal shutdown signal. Without these
-  // handlers, a crashed / force-quit MCP client (Claude Desktop, Jan, Codex,
-  // Cursor, VS Code) leaves this process orphaned under launchd (macOS) or
-  // init (Linux) until the user manually kills it. Watch both `end` (EOF on
-  // stdin — usually what happens) and `close` (stream destroyed — belt and
-  // braces for edge cases).
-  process.stdin.on('end', () => void shutdown('stdin EOF (MCP client disconnected)'));
-  process.stdin.on('close', () => void shutdown('stdin closed (MCP client disconnected)'));
+
+  // Session-end: the MCP SDK fires `transport.onclose` when the client ends
+  // the JSON-RPC session cleanly. Wire our shutdown to it so we don't linger
+  // after a normal disconnect.
+  transport.onclose = () => void shutdown('MCP transport closed');
+
+  // Orphan watcher: if the host process (Claude Desktop, Jan, Codex, Cursor,
+  // VS Code) crashes or is force-quit without sending SIGTERM, this process
+  // would otherwise keep running forever under launchd / init. We probe the
+  // original parent PID once a minute with signal 0 (pure existence check,
+  // no side effect). Works cross-platform — on macOS/Linux the OS reparents
+  // us to PID 1 so the dead original PID trips the check; on Windows PPID
+  // doesn't change on orphaning but signal 0 still throws ESRCH when the
+  // original parent is gone. `.unref()` keeps the interval from pinning the
+  // event loop when nothing else is alive.
+  //
+  // Previously we listened on `process.stdin` `end` / `close`, but that
+  // false-fires under Jan: Jan closes stdin briefly between initialize and
+  // the first tools/list while loading its local LLM, which would trigger
+  // an immediate self-exit here.
+  const originalPpid = process.ppid;
+  setInterval(() => {
+    try {
+      process.kill(originalPpid, 0);
+    } catch {
+      void shutdown('parent process died (orphaned)');
+    }
+  }, 60_000).unref();
 }
 
 function readWatcherOptsFromEnv() {

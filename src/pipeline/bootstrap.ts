@@ -128,8 +128,16 @@ export function bootstrap(db: DatabaseHandle, embedder: Embedder): BootstrapResu
   if (storedModel && storedSchema !== SCHEMA_VERSION) {
     reasons.push(`schema version changed: ${storedSchema} → ${SCHEMA_VERSION}`);
     needsReindex = true;
+    ensureEdgesTargetFragmentColumn(db);
     setMetadata(db, 'schema_version', String(SCHEMA_VERSION));
   }
+
+  // Belt-and-braces: the helper is idempotent (PRAGMA-guarded), so calling it
+  // unconditionally on every boot costs nothing and covers DBs where the
+  // stored schema_version is already current but the column is missing for
+  // any other reason (e.g. a prior boot that bumped the version metadata
+  // without running the ALTER).
+  ensureEdgesTargetFragmentColumn(db);
 
   // Stratified prefix-strategy migration: only fires for transformers.js users
   // with asymmetric models (BGE, E5, Nomic, mxbai, Arctic Embed). MiniLM and
