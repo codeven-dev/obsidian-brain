@@ -105,10 +105,10 @@ Three most common:
 
 ## Recent releases
 
+- **v1.6.3** — new `renameNode` DB primitive; `move_note` preserves inbound edges, chunk embeddings, and graph membership across rename (no delete-then-upsert).
 - **v1.6.2** — `move_note` ghost-link fix: inbound edges targeting `_stub/<name>.md` are now rewritten through rename; watcher path migrates forward-reference stubs inline.
 - **v1.6.0** — agentic-writes safety: `dryRun` previews on write tools, new `apply_edit_preview(previewId)` tool, bulk `edits[]` arrays, `fuzzyThreshold` tuning, `from_buffer` recovery.
 - **v1.5.8** — stub-lifecycle fixes (`move_note` / `delete_note` no longer orphan stubs; forward-refs upgrade when the real note is created), FTS5 hyphen-query crash fix, `search({mode:'hybrid', unique:'chunks'})` now returns chunk metadata.
-- **v1.5.0** — Ollama embedding provider, `next_actions` response envelope, `move_note` inbound-link rewriting, graph-analytics credibility guards.
 
 → Full changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md) · Forward plan: [docs/roadmap.md](docs/roadmap.md) · Build from source: [docs/development.md](docs/development.md)
 
