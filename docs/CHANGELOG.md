@@ -7,6 +7,21 @@ description: User-facing release notes. For full commit detail, see GitHub Relea
 
 User-facing release notes. For full commit-level detail see [GitHub Releases](https://github.com/sweir1/obsidian-brain/releases).
 
+## v1.6.13 — 2026-04-23 — Vitest coverage gate in CI + preflight
+
+**No user-visible change.** CI + test-infrastructure addition. Upgrading from v1.6.12 is drop-in — no schema migration, no config change, no runtime behaviour shift.
+
+Adds V8-provider coverage measurement via `@vitest/coverage-v8`, enforced per-file on every PR and push to main/dev. The gate fires locally via `npm run preflight` (so `npm run promote` can't slip a coverage regression past CI into a tag) and in `.github/workflows/ci.yml` (so PRs can't merge with under-threshold code). Coverage HTML report is uploaded as a CI artifact on every run (success or failure), so threshold trips are actionable from the GitHub Actions UI without a local re-run.
+
+- **Thresholds**: baseline-anchored (per-file-minimum on non-excluded files, minus 3pp for refactor tolerance). Lines 57, branches 37 at v1.6.13 baseline. `perFile: true` so a 0%-covered new file trips the gate regardless of the project average. No autoUpdate — manual ratchet via small PR when baseline shifts up meaningfully. See `RELEASING.md` → "Test coverage" for the discipline principles (forward: new tests must assert; backward: don't retrofit existing tests to raise numbers).
+- **Provider choice — V8 over Istanbul**: ~10% runtime overhead vs 20–40%, source-map-clean with vite-node, accurate enough for this codebase's imperative control flow.
+- **Grandfather mechanism — `coverage.exclude`, not per-path thresholds**. Discovered during implementation: in vitest 4, per-path threshold keys can only *raise* the bar on matched files — they don't exempt files from the global floor. Vitest source is explicit: "Global threshold is for all files, even if they are included by glob patterns" (see [vitest-dev/vitest#6165](https://github.com/vitest-dev/vitest/issues/6165)). `coverage.exclude` is the only mechanism that actually exempts a file. Seven files currently excluded with rationale + TODO comments in `vitest.config.ts`: `src/cli/index.ts` (untested legacy CLI), `src/server.ts` (subprocess blind spot — V8 coverage doesn't follow into child processes; validated by `server-stdin-shutdown.test.ts` instead), `src/pipeline/watcher.ts` (genuinely untested), the three plugin-dependent tools `active-note.ts`/`base-query.ts`/`dataview-query.ts`, and `src/tools/find-path-between.ts` (missing direct wrapper test).
+- **New npm scripts**: `test:coverage` (runs inside `preflight` and CI), `test:coverage:watch`. Plain `test` and `test:watch` stay coverage-free for fast local TDD loops.
+- **CI integration**: `.github/workflows/ci.yml` now runs `npm run test:coverage` in place of `npm test` (the plain step, not wrapped in a retry — corrupt-HF-cache recovery already lives upstream in `scripts/prefetch-test-models.mjs`). New "Upload coverage report" step uses `actions/upload-artifact@v4` with `if: always()` and 14-day retention so the HTML report is reachable from every CI run green or red. Step-level cross-reference comments point between `ci.yml` and `scripts/preflight.mjs` so the two invocation sites can't silently drift.
+- **RELEASING.md** gains a full "Test coverage" section covering gate shape, the exclude-based grandfather mechanism (with the vitest 4 behaviour explained), two discipline principles, manual ratchet cue, and escape hatch (write the test → adjust global threshold → add exclude, in that order of preference).
+
+`@vitest/coverage-v8` pinned at `~4.1.0` — ships in lockstep with vitest major.minor, so patch-pin forces deliberate review on any minor bump.
+
 ## v1.6.12 — 2026-04-23 — Test-layout refactor
 
 **No user-visible change.** Pure test-suite reorganisation + a new shared-helpers directory. Upgrading from v1.6.11 is drop-in — no schema migration, no config change, no runtime behaviour shift.
