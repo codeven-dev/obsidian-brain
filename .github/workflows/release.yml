@@ -128,17 +128,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Hugging Face embedding models
-        # Normalized cache keys so release.yml and ci.yml share the same
-        # restore-keys prefix. Either workflow's cache is usable by the
-        # other: ci.yml populates on main-branch pushes, release.yml reads
-        # it via the hf-models- prefix fallback.
-        #
-        # continue-on-error: a transient cache service outage must NOT fail
-        # the release — we just re-download the models, which is slow but
-        # correct.
-        uses: actions/cache@v5
+      - name: Restore Hugging Face embedding models cache
+        # Split restore/save so we only persist the cache AFTER prefetch
+        # verifies integrity. See ci.yml for the full rationale — same
+        # pattern for the same reason (prevent saving partial downloads).
+        uses: actions/cache/restore@v5
         continue-on-error: true
+        id: hf-cache-restore
         with:
           path: ${{ github.workspace }}/.cache/huggingface
           key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
@@ -147,6 +143,21 @@ jobs:
             hf-models-all-MiniLM-L6-v2-
             hf-models-
             hf-Xenova-bge-small-
+
+      - name: Prefetch embedding models (with retries + corruption recovery)
+        id: prefetch
+        run: node scripts/prefetch-test-models.mjs
+
+      - name: Save Hugging Face embedding models cache
+        # Only save if the prefetch succeeded AND the restore wasn't a
+        # direct key hit (nothing to save if the cache was already
+        # up-to-date).
+        if: steps.prefetch.outcome == 'success' && steps.hf-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.cache/huggingface
+          key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
 
       - name: Build
         run: npm run build

@@ -224,6 +224,16 @@ function buildCtx(
     // the ensureEmbedderReady chain via the closure).
     embedderReady: () => embedderInitialized,
     get initError() { return initError; },
+    pendingReindex: Promise.resolve(),
+    enqueueBackgroundReindex(work: () => Promise<void>): void {
+      ctx.pendingReindex = ctx.pendingReindex.finally(() => {
+        return work().catch((err: unknown) => {
+          process.stderr.write(
+            `obsidian-brain: background reindex failed: ${String(err)}\n`,
+          );
+        });
+      });
+    },
   } as unknown as ServerContext;
 
   const setReady = (): void => {

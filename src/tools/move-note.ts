@@ -3,6 +3,7 @@ import { basename, join } from 'path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerTool } from './register.js';
+import { runBackgroundReindex } from './background-reindex.js';
 import type { ServerContext } from '../context.js';
 import type { DatabaseHandle } from '../store/db.js';
 import { resolveNodeName } from '../resolve/name-match.js';
@@ -143,9 +144,7 @@ export function registerMoveNoteTool(server: McpServer, ctx: ServerContext): voi
       // the embedder init + index run would make this tool call wait minutes on
       // first run, which MCP clients time out. The watcher path already accepts
       // this eventual-consistency window; this matches.
-      void ctx.ensureEmbedderReady()
-        .then(() => ctx.pipeline.index(ctx.config.vaultPath))
-        .catch((err) => process.stderr.write(`obsidian-brain: background reindex failed: ${String(err)}\n`));
+      runBackgroundReindex(ctx);
 
       return {
         ...result,

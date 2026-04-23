@@ -58,25 +58,20 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Hugging Face embedding models
-        # Shared across main and dev: GitHub Actions cache scope is per-branch
-        # for WRITES (a cache created on dev is only readable on dev), BUT
-        # restore-keys fall back across branches via the default branch
-        # (main). So dev runs that don't have their own cache yet restore
-        # from main's. On every run, we save the cache under the current
-        # ref's scope, which means main builds up the shared fallback.
+      - name: Restore Hugging Face embedding models cache
+        # Split restore/save so we only persist the cache AFTER prefetch
+        # verifies integrity (see the "Save" step below the prefetch).
+        # Without this split, actions/cache's default post-step would save
+        # the cache directory unconditionally — including any partial
+        # downloads left behind by a killed run. That's the original
+        # "Protobuf parsing failed" root cause.
         #
-        # Two models are cached under restore-key prefixes so both the
-        # all-MiniLM-L6-v2 default (used by tests that instantiate
-        # `new Embedder()` directly) and the bge-small-en-v1.5 preset
-        # default (used by factory-routed callers) both hit.
-        #
-        # continue-on-error: true — a transient cache service outage or a
-        # missing cache entirely must NOT fail the job. We just re-download
-        # the model, which is slow but correct.
-        uses: actions/cache@v5
+        # Shared across main + dev: actions/cache writes are scoped per
+        # branch, but restore-keys fall through to the default branch, so
+        # dev runs read from main's cache when their own isn't populated.
+        uses: actions/cache/restore@v5
         continue-on-error: true
-        id: hf-cache
+        id: hf-cache-restore
         with:
           path: ${{ github.workspace }}/.cache/huggingface
           key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
@@ -102,7 +97,25 @@ jobs:
         #
         # This warms the cache deterministically so vitest just reads from
         # disk — no parallel-download races between test files.
+        id: prefetch
         run: node scripts/prefetch-test-models.mjs
+
+      - name: Save Hugging Face embedding models cache
+        # Only save the cache AFTER prefetch succeeded — `if: success()`
+        # scoped to the prefetch step. If prefetch failed or retried with
+        # corruption, we skip the save so a corrupt cache doesn't get
+        # persisted under the key and poison future runs. This is the
+        # defence against the original "killed mid-download → cache saved
+        # with partial file → next run trusts it → Protobuf error" cycle.
+        #
+        # Also skip if the cache was already an exact-key hit on restore —
+        # nothing changed, nothing to save.
+        if: steps.prefetch.outcome == 'success' && steps.hf-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: ${{ github.workspace }}/.cache/huggingface
+          key: hf-models-all-MiniLM-L6-v2-bge-small-en-v1.5-v1
 
       - name: Unit tests
         run: npm test

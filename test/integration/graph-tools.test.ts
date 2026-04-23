@@ -92,14 +92,27 @@ function buildCtx(
   embedder: Embedder,
 ): ServerContext {
   const writer = new VaultWriter(vault, db);
-  return {
+  const ctx = {
     db,
     embedder,
     pipeline,
     writer,
     config: { vaultPath: vault },
     ensureEmbedderReady: async () => {},
-  } as unknown as ServerContext;
+    embedderReady: () => true,
+    initError: undefined,
+    pendingReindex: Promise.resolve(),
+    enqueueBackgroundReindex(work: () => Promise<void>): void {
+      ctx.pendingReindex = ctx.pendingReindex.finally(() => {
+        return work().catch((err: unknown) => {
+          process.stderr.write(
+            `obsidian-brain: background reindex failed: ${String(err)}\n`,
+          );
+        });
+      });
+    },
+  };
+  return ctx as unknown as ServerContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +175,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       const inbound = getEdgesByTarget(db, 'BMW.md');
       expect(inbound.some((e) => e.sourceId === 'Cars.md')).toBe(true);
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -196,6 +212,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       const inbound = getEdgesByTarget(db, 'BMW.md');
       expect(inbound.some((e) => e.sourceId === 'Cars.md')).toBe(true);
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -240,6 +259,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       const inbound = getEdgesByTarget(db, 'Target.md');
       expect(inbound.some((e) => e.sourceId === 'Notes.md')).toBe(true);
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -269,6 +291,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       const aContent = await readFile(join(vault, 'A.md'), 'utf-8');
       expect(aContent).toMatch(/\[\[B\]\]/);
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -306,6 +331,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       expect(aContent).toContain('[[Renamed & Archived]]');
       expect(bContent).toContain('[[Renamed & Archived]]');
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -342,6 +370,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       // The important assertion: A.md itself is NOT orphaned or corrupted.
       expect(getNode(db, 'A.md')).toBeDefined();
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);
@@ -372,6 +403,9 @@ describe.sequential('graph-tools integration (pipeline.index + inbound-edge asse
       expect(typeof result.stubsPruned).toBe('number');
       expect(getNode(db, '_stub/Ghost.md')).toBeUndefined();
 
+      // Drain any fire-and-forget reindex queued by a tool call so it cannot
+      // race with the vault teardown below and log ENOENT to stderr.
+      await ctx.pendingReindex;
       rmSync(vault, { recursive: true, force: true });
       db.close();
     }, 120_000);

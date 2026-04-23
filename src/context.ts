@@ -35,6 +35,20 @@ export interface ServerContext {
   getBootstrap: () => BootstrapResult | null;
   embedderReady: () => boolean;
   initError: unknown | undefined;
+  /**
+   * Tracks the tail of the fire-and-forget reindex chain from write tools.
+   * In production nothing awaits this — the writes return immediately and
+   * the reindex drains in the background. In tests, afterEach awaits
+   * `ctx.pendingReindex` before tearing down the temp vault / closing the
+   * DB so the trailing reindex doesn't ENOENT against a deleted directory.
+   * Always a resolved promise when no work is queued.
+   */
+  pendingReindex: Promise<void>;
+  /**
+   * Internal hook — write tools call this to chain their fire-and-forget
+   * reindex onto the tail of `pendingReindex`. Not part of the user API.
+   */
+  enqueueBackgroundReindex: (work: () => Promise<void>) => void;
 }
 
 export async function createContext(): Promise<ServerContext> {
@@ -81,6 +95,20 @@ export async function createContext(): Promise<ServerContext> {
     getBootstrap: () => bootstrapResult,
     embedderReady: () => embedderInitialized,
     initError: undefined,
+    pendingReindex: Promise.resolve(),
+    enqueueBackgroundReindex(work) {
+      // Chain onto the current tail — .finally() runs the work whether
+      // the prior chain resolved or rejected, so a failed reindex never
+      // blocks subsequent ones. We wrap with .catch() so the tail always
+      // resolves (never rejects) — afterEach awaiting this mustn't throw.
+      ctx.pendingReindex = ctx.pendingReindex.finally(() => {
+        return work().catch((err) => {
+          process.stderr.write(
+            `obsidian-brain: background reindex failed: ${String(err)}\n`,
+          );
+        });
+      });
+    },
   };
   return ctx;
 }
