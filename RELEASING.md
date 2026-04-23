@@ -380,6 +380,65 @@ These were never pushed to `origin`. Safe to delete any time.
 
 ---
 
+## Branch protection
+
+GitHub rulesets enforce these invariants server-side. Re-apply any time via
+`npm run setup:protection` (idempotent — re-running updates existing rulesets
+in place rather than duplicating them):
+
+### `main` — ruleset `obsidian-brain/main`
+
+- **Force-push blocked** (`non_fast_forward`). Nothing can rewrite main's
+  history. `git push --force origin main` and `git push --force-with-lease
+  origin main` both fail server-side.
+- **Deletion blocked** (`deletion`). `git push origin :main` fails.
+- **Linear history required** (`required_linear_history`). No merge commits
+  on main. Works because `promote` uses `git merge --ff-only` — the workflow
+  naturally produces linear history. Blocks the footgun of running
+  `git merge dev` (without `--ff-only`) and landing a merge commit.
+
+These three together give the "can't push to main except via a clean FF from
+dev" guarantee you asked for. Combined with the fact that `promote` only runs
+from dev, there's no safe path to land code on main that didn't come through
+dev first.
+
+### `dev` — ruleset `obsidian-brain/dev`
+
+- **Deletion blocked.** `git push origin :dev` fails.
+- Force-push is **intentionally allowed**. The cherry-pick branch of
+  `promote` rebases dev onto main and force-pushes with `--force-with-lease`.
+  Blocking force-push here would break that flow.
+
+### Not enforced (yet) — required CI check
+
+Once CI is green consistently on dev, add a "Require status checks to pass"
+rule to the main ruleset so Dependabot PRs can't merge with red CI. Setup:
+
+1. GitHub → Settings → Rules → Rulesets → `obsidian-brain/main` → Edit.
+2. Add rule → "Require status checks to pass".
+3. Pick `Build, test, smoke, docs` from the Actions dropdown.
+4. (Optional) Tick "Require branches to be up to date before merging".
+
+Don't turn this on while CI is failing — it blocks every PR, including
+harmless doc-typo fixes.
+
+### Emergency escape hatch
+
+If a ruleset ever locks you out of a legitimate operation (rare, but
+possible with future rules), temporarily disable it:
+
+```bash
+# disable the main ruleset
+gh api --method PUT repos/sweir1/obsidian-brain/rulesets/$(
+  gh api repos/sweir1/obsidian-brain/rulesets --jq '.[] | select(.name=="obsidian-brain/main") | .id'
+) -f enforcement=disabled
+
+# do the operation, then re-enable:
+npm run setup:protection
+```
+
+---
+
 ## CHANGELOG conventions
 
 Every release gets exactly one CHANGELOG entry. Format:

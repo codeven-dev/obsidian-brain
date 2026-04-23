@@ -53,6 +53,7 @@
     "check-plugin": "node scripts/check-plugin-version.mjs",
     "idea": "node scripts/idea.mjs",
     "promote": "node scripts/promote.mjs",
+    "setup:protection": "node scripts/setup-branch-protection.mjs",
     "prepublishOnly": "npm run build",
     "preversion": "npm run gen-docs && npm run gen-tools-docs && npm run check-plugin && git add docs/configuration.md docs/tools.md",
     "version": "node scripts/sync-server-version.mjs && git add server.json",
