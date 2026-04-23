@@ -47,31 +47,59 @@ export function buildStemLookup(allPaths: string[]): Map<string, string[]> {
 }
 
 /**
- * Rewrite every wiki-link whose stem matches `oldStem` to point at `newStem`.
+ * Rewrite every wiki-link targeting `oldPath` (as either a bare stem or a
+ * path-qualified reference) to point at `newPath`.
  *
- * Handles the four forms Obsidian emits:
- *   - `[[old]]`           → `[[new]]`
- *   - `[[old|display]]`   → `[[new|display]]` (alias preserved)
- *   - `![[old]]`          → `![[new]]`        (embed preserved)
- *   - `[[old#heading]]`   → `[[new#heading]]` (heading/block suffix preserved)
- *   - `[[old^block]]`     → `[[new^block]]`
+ * `oldPath` and `newPath` are vault-relative `.md` paths — e.g.
+ * `"notes/BMW.md"` and `"cars/BMW & Audi.md"`. The function handles three
+ * match shapes in priority order:
  *
- * Stems are compared by trimmed equality — path-qualified links (`[[dir/old]]`)
- * match only when `oldStem` was supplied path-qualified. Callers should pass
- * basenames-without-`.md` for bare-name matching (the common case).
+ *   1. Bare-stem reference `[[BMW]]`           → `[[BMW & Audi]]`
+ *      Preserves the author's shortest-path style. Output uses the new
+ *      basename, not the new folder-qualified path.
+ *
+ *   2. Path-qualified reference without `.md` `[[notes/BMW]]`
+ *                                              → `[[cars/BMW & Audi]]`
+ *      Emits the full new path (no `.md`) so a cross-folder rename works
+ *      end-to-end without leaving the link pointing at a defunct folder.
+ *
+ *   3. Path-qualified reference with `.md` `[[notes/BMW.md]]`
+ *                                              → `[[cars/BMW & Audi]]`
+ *      Rare but canonical Obsidian syntax; normalised to without-`.md` form
+ *      for consistency with (2).
+ *
+ * Preserves the four decoration forms in all cases:
+ *   `[[x|alias]]`, `![[x]]`, `[[x#heading]]`, `[[x^block]]`.
  */
 export function rewriteWikiLinks(
   markdown: string,
-  oldStem: string,
-  newStem: string,
+  oldPath: string,
+  newPath: string,
 ): { text: string; occurrences: number } {
+  const oldStem = oldPath.replace(/\.md$/, '').split('/').pop() ?? '';
+  const oldPathNoExt = oldPath.replace(/\.md$/, '');
+  const newStem = newPath.replace(/\.md$/, '').split('/').pop() ?? '';
+  const newPathNoExt = newPath.replace(/\.md$/, '');
+
   let occurrences = 0;
   // Groups: 1=optional !, 2=stem, 3=optional # or ^ suffix, 4=optional | alias.
   const pattern = /(!?)\[\[([^\]|#^\n]+?)((?:#|\^)[^\]|\n]+)?(\|[^\]\n]*)?\]\]/g;
   const text = markdown.replace(pattern, (full, bang, stem, suffix, alias) => {
-    if (stem.trim() !== oldStem) return full;
+    const trimmed = stem.trim();
+    let replacement: string | null = null;
+    if (trimmed === oldStem) {
+      // Bare-stem match: only rewrite when the stem itself changed. A
+      // cross-folder-only move leaves bare-stem references resolving
+      // correctly on their own.
+      if (oldStem !== newStem) replacement = newStem;
+    } else if (trimmed === oldPathNoExt || trimmed === oldPath) {
+      // Path-qualified match: rewrite when the full path changed (folder
+      // and/or basename).
+      if (oldPathNoExt !== newPathNoExt) replacement = newPathNoExt;
+    }
+    if (replacement === null) return full;
     occurrences++;
-    return `${bang}[[${newStem}${suffix ?? ''}${alias ?? ''}]]`;
+    return `${bang}[[${replacement}${suffix ?? ''}${alias ?? ''}]]`;
   });
   return { text, occurrences };
 }

@@ -221,4 +221,71 @@ describe('rewriteWikiLinks', () => {
     expect(text).toBe('Price in [[$amount]].');
     expect(occurrences).toBe(1);
   });
+
+  // v1.6.4 — path-qualified wiki-links rewrite correctly when the note moves
+  // across folders. The signature now takes full vault-relative paths
+  // (`.md` included) so we can distinguish bare-stem from path-qualified
+  // references and emit the correct replacement form for each.
+  describe('path-qualified (v1.6.4)', () => {
+    it('rewrites a path-qualified reference to the new full path when the folder changes', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'See [[notes/BMW]] for details.',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      expect(text).toBe('See [[cars/BMW & Audi]] for details.');
+      expect(occurrences).toBe(1);
+    });
+
+    it('rewrites a bare-stem reference to the new bare stem (not folder-qualified)', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'See [[BMW]] for details.',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      expect(text).toBe('See [[BMW & Audi]] for details.');
+      expect(occurrences).toBe(1);
+    });
+
+    it('rewrites a path-qualified reference with `.md` suffix', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'See [[notes/BMW.md]] for details.',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      expect(text).toBe('See [[cars/BMW & Audi]] for details.');
+      expect(occurrences).toBe(1);
+    });
+
+    it('preserves heading suffixes on path-qualified rewrites', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'Jump to [[notes/BMW#Specs]] now.',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      expect(text).toBe('Jump to [[cars/BMW & Audi#Specs]] now.');
+      expect(occurrences).toBe(1);
+    });
+
+    it('does not rewrite a path-qualified reference whose folder does not match the old path', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'Other bike: [[other/BMW]] — unrelated.',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      expect(text).toBe('Other bike: [[other/BMW]] — unrelated.');
+      expect(occurrences).toBe(0);
+    });
+
+    it('rewrites only the matching folder when two same-stem files exist in different folders', () => {
+      const { text, occurrences } = rewriteWikiLinks(
+        'Active [[notes/BMW]] and archived [[archive/BMW]].',
+        'notes/BMW.md',
+        'cars/BMW & Audi.md',
+      );
+      // notes/BMW matched → rewritten. archive/BMW not matched → untouched.
+      expect(text).toBe('Active [[cars/BMW & Audi]] and archived [[archive/BMW]].');
+      expect(occurrences).toBe(1);
+    });
+  });
 });

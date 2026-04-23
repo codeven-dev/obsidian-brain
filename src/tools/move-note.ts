@@ -23,9 +23,10 @@ async function previewInboundRewrites(
   oldPath: string,
   newPath: string,
 ): Promise<Array<{ file: string; occurrences: number }>> {
+  // Drop the same-stem early-out: v1.6.4's path-qualified rewriting means a
+  // cross-folder rename with an unchanged basename still has links to
+  // rewrite (e.g. `[[notes/BMW]]` → `[[cars/BMW]]`).
   const oldStem = basename(oldPath, '.md');
-  const newStem = basename(newPath, '.md');
-  if (oldStem === newStem) return [];
 
   // Also pick up edges pointing at the matching stub path. Pre-v1.5.8 vaults
   // and forward-ref-stubs that were never migrated to real keep their edges
@@ -48,7 +49,7 @@ async function previewInboundRewrites(
     } catch {
       continue;
     }
-    const { occurrences } = rewriteWikiLinks(content, oldStem, newStem);
+    const { occurrences } = rewriteWikiLinks(content, oldPath, newPath);
     if (occurrences > 0) {
       results.push({ file: sourceRel, occurrences });
     }
@@ -175,10 +176,6 @@ export async function rewriteInboundLinks(
   newPath: string,
 ): Promise<{ files: number; occurrences: number; rewrittenSources: string[] }> {
   const oldStem = basename(oldPath, '.md');
-  const newStem = basename(newPath, '.md');
-
-  // A rename that only changes the directory leaves every link intact.
-  if (oldStem === newStem) return { files: 0, occurrences: 0, rewrittenSources: [] };
 
   // Also pick up edges whose target is the matching stub path. These can be
   // left over from forward-ref stubs that were never migrated to real — old
@@ -205,7 +202,7 @@ export async function rewriteInboundLinks(
     } catch {
       continue;
     }
-    const { text, occurrences: hits } = rewriteWikiLinks(content, oldStem, newStem);
+    const { text, occurrences: hits } = rewriteWikiLinks(content, oldPath, newPath);
     if (hits > 0) {
       await fs.writeFile(abs, text, 'utf-8');
       files++;
