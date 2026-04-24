@@ -17,7 +17,8 @@ export class OllamaEmbedder implements Embedder {
   private readonly numCtx: number;
 
   constructor(
-    private readonly baseUrl: string = 'http://localhost:11434',
+    // readonly (not private) — capacity probing via Ollama /api/show needs to read it
+    readonly baseUrl: string = 'http://localhost:11434',
     private readonly model: string = 'nomic-embed-text',
     expectedDim?: number,
     numCtx?: number,
