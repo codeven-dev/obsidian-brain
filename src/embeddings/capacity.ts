@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseHandle } from '../store/db.js';
 import type { Embedder } from './types.js';
+import { OllamaEmbedder } from './ollama.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -74,19 +75,8 @@ interface TransformersEmbedderLike extends Embedder {
   };
 }
 
-/** Minimal interface we need from OllamaEmbedder beyond base Embedder. */
-interface OllamaEmbedderLike extends Embedder {
-  /** Base URL of the Ollama server (e.g. http://localhost:11434). */
-  readonly baseUrl?: string;
-  readonly _baseUrl?: string;
-}
-
 function isTransformersEmbedder(e: Embedder): e is TransformersEmbedderLike {
   return e.providerName() === 'transformers.js';
-}
-
-function isOllamaEmbedder(e: Embedder): e is OllamaEmbedderLike {
-  return e.providerName() === 'ollama';
 }
 
 // ---------------------------------------------------------------------------
@@ -308,12 +298,13 @@ export async function getCapacity(
     advertised = resolved.advertised;
     discovered = advertised;
     method = resolved.method;
-  } else if (isOllamaEmbedder(embedder)) {
+  } else if (embedder.providerName() === 'ollama') {
     // Extract model name from "ollama:<model>" identifier.
     const modelName = embedderId.replace(/^ollama:/, '');
+    // instanceof narrows to OllamaEmbedder so baseUrl is type-safe; fall back
+    // to env-var / default for any other Ollama-compatible embedder.
     const baseUrl =
-      (embedder as OllamaEmbedderLike).baseUrl ??
-      (embedder as OllamaEmbedderLike)._baseUrl ??
+      (embedder instanceof OllamaEmbedder ? embedder.baseUrl : undefined) ??
       process.env.OLLAMA_BASE_URL ??
       'http://localhost:11434';
 
