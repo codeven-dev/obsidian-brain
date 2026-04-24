@@ -597,6 +597,13 @@ Rules:
 - **Bullets, not prose paragraphs.** Short, user-facing, past-tense where
   applicable.
 - **Entries in reverse chronological order** (newest at the top).
+- **No real names.** Do not reference reporters, maintainers, reviewers, or
+  any individual by name in the CHANGELOG, commit messages, code comments,
+  docs, or any other shipped artifact. Describe bugs by symptom and
+  scenario, not by who hit them. Made-up personas (e.g. "a user with a
+  mixed-language vault") are fine; actual names are not. This applies to
+  every committed artifact in the repo, not just the CHANGELOG — commit
+  messages travel with the repo and are just as public.
 
 The `awk` extractor reads from the line matching `^## v${VERSION}` (space, EOF,
 or em dash following) up to the next line starting with `## v` or EOF. Everything

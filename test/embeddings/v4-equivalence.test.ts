@@ -18,11 +18,12 @@
  *   transformers.js bump (v4.3, v5, etc.) before the release ships.
  *
  * Running the test:
- *   EMBEDDER_BASELINE=1 npm test -- v4-equivalence
+ *   npm test -- v4-equivalence     # runs by default
  *
- * The test is SKIPPED by default (no EMBEDDER_BASELINE env var) so it does
- * not slow down the main suite or CI. It requires the model to be cached
- * locally (~34 MB for bge-small-en-v1.5, q8).
+ * The test requires the model (~34 MB for bge-small-en-v1.5, q8). CI caches
+ * the HF dir across runs; locally the first run downloads it once. Set
+ * OBSIDIAN_BRAIN_SKIP_BASELINE=1 to opt out explicitly (e.g. in an
+ * offline environment).
  *
  * Re-capturing the baseline after an intentional model upgrade:
  *   npm run embedder:baseline
@@ -37,9 +38,10 @@ import { fileURLToPath } from 'node:url';
 import { pipeline, env as hfEnv } from '@huggingface/transformers';
 
 // ---------------------------------------------------------------------------
-// Skip flag: only runs when EMBEDDER_BASELINE=1 is set.
+// Skip flag: runs by default; opt out with OBSIDIAN_BRAIN_SKIP_BASELINE=1 for
+// offline / constrained environments.
 // ---------------------------------------------------------------------------
-const runBaseline = !!process.env.EMBEDDER_BASELINE;
+const runBaseline = process.env.OBSIDIAN_BRAIN_SKIP_BASELINE !== '1';
 
 // ---------------------------------------------------------------------------
 // Paths

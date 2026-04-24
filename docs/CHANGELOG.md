@@ -11,7 +11,7 @@ User-facing release notes. For full commit-level detail see [GitHub Releases](ht
 
 **⚠ One-time background reindex on upgrade** — v1.7.0 bumps the prefix-strategy version to close a latent Arctic Embed v2 bug and to add Ollama-routed e5 prefix support. Asymmetric-model users (BGE, E5, Nomic, etc.) will see a one-time re-embed on first boot; semantic search returns a `preparing` status during it; fulltext + all other tools work throughout.
 
-**Talal bugfix bundle:**
+**Fault tolerance + adaptive capacity:**
 - **Fault-tolerant rebuild** — per-chunk try/catch so one bad chunk no longer halts a full reindex; skipped chunks are logged and recorded in the new `failed_chunks` table. Follows NAACL 2025 consensus: skip + log, not recurse-halve.
 - **Ollama `num_ctx` override** — new `options.num_ctx` field in every embed request (default 8192); configurable via `OLLAMA_NUM_CTX`. Ollama's own default of 2048 silently truncates long chunks for models trained on larger contexts.
 - **Adaptive capacity** — tokenizer-aware chunk budgeting reads `model_max_length` directly from the model's AutoTokenizer; schema v6 adds `embedder_capability` and `failed_chunks` tables; failed chunks reduce the cached `discovered_max_tokens` so future chunks aim smaller. Configurable via `OBSIDIAN_BRAIN_MAX_CHUNK_TOKENS`.
