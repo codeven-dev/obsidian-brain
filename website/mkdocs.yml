@@ -159,3 +159,4 @@ nav:
       - Changelog: CHANGELOG.md
       - Roadmap: roadmap.md
       - Build from source: development.md
+      - Test coverage: coverage.md

@@ -280,6 +280,30 @@ Notes:
 ## What happens after the tag
 
 Once the tag is pushed, `.github/workflows/release.yml` fires automatically.
+Step order (as of v1.6.21):
+
+```
+1.  Checkout (full history — needed for the main-ancestor check)
+2.  Refuse to publish tags that aren't on main         (push only)
+3.  Wait for CI to succeed on this SHA                 (push only)
+4.  Resolve version (from tag name or workflow_dispatch input)
+5.  Setup Node
+6.  Sync versions in package.json + server.json from tag
+7.  Install dependencies (npm ci)
+8.  Build (tsc → dist/)
+9.  Install mcp-publisher                              ← pre-publish validation
+10. Validate server.json                               ← PRE-publish gate
+11. Publish to npm (OIDC, with provenance)
+12. Login to MCP Registry (OIDC)
+13. Publish to MCP Registry
+14. Create / refresh GitHub Release (mark as latest)
+```
+
+`ci.yml` runs the full validation suite (tests+coverage, smoke, docs:build,
+gen-docs drift, codespell, plugin version check) on the same commit in
+parallel. `release.yml` deliberately **does not** re-run any of that — step
+3's CI-gate is the authoritative proof that validation passed, so repeating
+it here would be pure duplication.
 
 ### Main-branch guard
 
@@ -289,29 +313,38 @@ is not on `main`, the workflow exits 1 and publishes nothing.
 
 ### Wait for CI to succeed on this SHA
 
-Immediately after the main-branch guard, `release.yml` polls
-`gh run list --workflow CI --commit $GITHUB_SHA` for up to 10 minutes.
-`ci.yml` fires on the same push as the tag, so both workflows run in parallel;
-this step waits for ci.yml to finish, then checks its conclusion. If ci.yml
-failed or didn't complete in 10 min, release.yml exits 1 and skips every
-downstream publish step (npm, MCP Registry, GitHub Release).
+Polls `gh run list --workflow CI --commit $GITHUB_SHA` every **10 seconds**,
+up to **60 iterations = 10 minutes**. Early-exits on either success (continue)
+or any non-success conclusion (refuse, exit 1). If no CI run has concluded
+within 10 minutes, the workflow refuses to publish.
 
-This gates the artefact on the full validation suite (tests+coverage,
-docs:build --strict, gen-docs drift, codespell, plugin version check). It's
-the canonical "can't ship on red CI" protection regardless of whether
-promote or a hand-run created the tag.
-
-Skipped for `workflow_dispatch` (manual publish): the caller is explicitly
-overriding the normal path.
+Gates the artefact on the full validation suite regardless of whether
+promote or a hand-run created the tag. Skipped for `workflow_dispatch`
+(manual publish) — that path is an explicit opt-in override.
 
 ### Version sync from tag
 
-The workflow uses `jq` to rewrite `package.json.version` and both
-`server.json.version` / `server.json.packages[0].version` from the tag name.
-This means even if the files were somehow out of sync when the tag was created,
-the published artifact always reflects the tag.
+Uses `jq` to rewrite `package.json.version` and both `server.json.version`
+and `server.json.packages[0].version` from the tag name. Defence-in-depth:
+under normal B5 flow, the commit already has the right version (`npm version`
+set it), so this is a no-op. If the files ever drifted from the tag, this
+step is the last-chance correction.
 
-### npm publish (line 145)
+### Install mcp-publisher + Validate server.json (PRE-publish)
+
+mcp-publisher is installed and `./mcp-publisher validate` runs before any
+publish happens. If `server.json` fails the MCP Registry schema (e.g. drift
+in the hand-maintained `environmentVariables[]` list, see "Env-var hand-edit"
+below), the workflow exits 1 and **nothing ships** — no npm tarball, no MCP
+Registry entry, no GitHub Release. Matches the `preversion` hook pattern:
+check first, mutate second.
+
+Moved earlier in v1.6.21 after v1.6.20 shipped a tarball to npm before
+validation ran (the old ordering would have leaked an un-publishable-to-MCP
+version onto npm if `server.json` had been malformed — it wasn't, but the
+ordering was wrong in principle).
+
+### npm publish
 
 ```
 npm publish --access public
@@ -320,15 +353,16 @@ npm publish --access public
 Authentication uses **OIDC — no `NPM_TOKEN` secret**. The npmjs.com trusted
 publisher is configured once under the package settings (org: `sweir1`, repo:
 `obsidian-brain`, workflow: `release.yml`). See the one-time setup comment at
-the top of `release.yml`.
+the top of `release.yml`. Publishes under the `latest` dist-tag — the only
+tag we maintain (see "Dist-tag management" below).
 
-### MCP Registry publish (lines 148–159)
+### MCP Registry publish
 
-Downloads `mcp-publisher` from the MCP Registry releases, authenticates via
-`./mcp-publisher login github-oidc` (OIDC, no token), validates `server.json`,
-then publishes.
+`./mcp-publisher login github-oidc` authenticates via OIDC (no token), then
+`./mcp-publisher publish` ships the entry. `server.json` was already validated
+pre-publish in step 10, so this step is just "upload the validated manifest".
 
-### GitHub Release (lines 161–193)
+### GitHub Release
 
 Release notes are extracted from `docs/CHANGELOG.md` with `awk`:
 
@@ -392,223 +426,27 @@ hits a warm partial cache for bge-small variants.
 
 ---
 
-## Test coverage
+## Test coverage (gate summary)
 
-`npm run test:coverage` runs vitest with V8-provider coverage. Reports land
-in `coverage/` — open `coverage/index.html` for the per-file drill-down.
-The same invocation runs inside `npm run preflight` and inside
-`.github/workflows/ci.yml`, so the gate fires locally and in CI from the
-same entry point.
+**Every release must pass the coverage gate.** `vitest.config.ts` defines
+per-file thresholds (V8 provider) that fire at three checkpoints:
 
-### Gate shape
+1. **Local preflight** (auto-invoked by `npm run promote`): `npm run test:coverage` must pass. Promote aborts before any push if it fails.
+2. **CI** (`.github/workflows/ci.yml`): same `npm run test:coverage` runs on every push to `main` and `dev`. Non-admin PRs cannot merge to main without this green (required status check, no bypass for non-admin roles).
+3. **Release gate** (`.github/workflows/release.yml`): waits for CI to go green on the exact tagged SHA before `npm publish` runs. A coverage regression on the tagged commit → nothing ships to npm, MCP Registry, or GitHub Releases.
 
-- **Provider**: V8 (`@vitest/coverage-v8`). ~10% runtime overhead vs
-  Istanbul's 20–40%. Accurate enough for this codebase's imperative glue.
-  Under Vitest 3.2+ the provider uses AST-based V8-to-Istanbul remapping
-  ([3.2 blog](https://vitest.dev/blog/vitest-3-2.html)); Vitest 4.x removes
-  the old heuristic path entirely and makes AST the only mode
-  ([v4 migration](https://vitest.dev/guide/migration.html)). So the V8
-  numbers reported here are AST-accurate, not the inflated ones from
-  pre-3.2.
-- **Per-file** (`thresholds.perFile: true`). Every file must independently
-  meet the bar — global averages would let a 0%-covered new module sit
-  next to a 99%-covered existing module and pass unnoticed. The gate is
-  supposed to surface gaps, not hide them in averages.
-- **Anchor**: baseline-minimum minus 3pp (refactor tolerance). NOT an
-  aspirational target. Arbitrary "80%" thresholds invite coverage
-  theatre; anchoring to observed minimums catches regressions without
-  demanding a made-up number.
-- **Metrics gated**: `lines` + `branches` at 57% / 37% (baseline-min
-  minus 3pp). `statements` ≈ `lines`, `functions` tracks lines closely —
-  gating all four over-constrains.
+📖 **You MUST read [`docs/coverage.md`](./docs/coverage.md) before your first release.** It covers everything the gate is actually doing and why:
 
-### Why branches trails lines — it's structural, not broken
+- **Gate shape**: V8 provider, per-file thresholds, baseline-anchored (NOT aspirational). Why `57`/`37` is the floor.
+- **Why branches trails lines** — it's structural (idiomatic TypeScript produces many branches per line), not broken. Realistic ceiling is ~85%.
+- **`/* v8 ignore */` policy** — narrow by design. Cap of ~10 ignores across the whole codebase.
+- **fast-check (property-based testing)** — pilot in `test/embeddings/chunker.properties.test.ts`.
+- **Grandfather mechanism** — why `exclude`, not per-path threshold overrides (vitest 4 limitation).
+- **The two discipline principles** — forward (tests must assert) + backward (don't retrofit). The rules that keep the gate from becoming theatre.
+- **Manual ratchet** — how and when to bump thresholds.
+- **Escape hatch** — what to do when a legitimate refactor drops coverage.
 
-As of v1.6.14: statements 91.6, **branches 81.8**, functions 90.6, lines
-92.6. The 10pp gap between lines and branches is textbook for idiomatic
-TypeScript and isn't going anywhere. Every decision point — `if/else`,
-ternary, `??`, `?.`, `||`, `&&`, `switch` case, default parameter,
-destructuring default — counts as multiple branches. A single line like
-`const name = user?.profile?.name ?? 'anon'` produces 5 branches per 1
-line. Happy-path tests give 100% lines and ~40% branches on that line
-alone.
-
-See [Codecov](https://about.codecov.io/blog/line-or-branch-coverage-which-type-is-right-for-you/)
-and [Ardalis](https://ardalis.com/which-is-more-important-line-coverage-or-branch-coverage/)
-for the standard explanations. A 10–20pp lines-vs-branches gap is
-textbook for real codebases.
-
-**Realistic ceiling for server code: ~85% branches.** A v1.6.14 forensic
-audit classified the 268-branch gap at that release: ~61% defensive or
-unreachable (`catch` arms, `err instanceof Error` else-arms, null guards
-on already-validated Zod objects, ABI-heal messaging), ~30%
-truthy/falsy shortcuts where one side is legitimately untested,
-~9% real untested behaviour worth writing tests for. Chasing the
-defensive 61% with contrived tests is exactly the coverage theatre the
-two discipline principles below exist to prevent.
-
-**Aspirational targets (documented, NOT enforced):** 85% branches /
-92% lines. Per-file floors in the config stay baseline-anchored —
-aspirational targets live in docs where they can't cause whack-a-mole
-CI failures.
-
-### `/* v8 ignore */` policy
-
-Vitest's V8 provider honours `/* v8 ignore next */`, `/* v8 ignore start */
-… /* v8 ignore stop */`, and `/* v8 ignore if */` / `/* v8 ignore else */`
-directives. They suppress specific branches from the gate when the
-branch is **genuinely unreachable**. The policy is narrow by design —
-overuse turns the gate into a rubber stamp.
-
-**Legitimate uses:**
-
-- `err instanceof Error ? err.message : String(err)` — the else arm
-  only fires for thrown non-Error values (Promise rejection of a bare
-  string/number), which no call site in this codebase does. As of
-  v1.6.14 this pattern is centralised in `src/util/errors.ts ::
-  errorMessage(err)` with a single ignore on the fallback — nine
-  duplicated sites collapse into one.
-- `const x = options?.foo ?? default` where `options` is a validated
-  Zod-shape object and `.foo` is required — the nullish branch can't
-  fire.
-- `throw new Error('unreachable')` in exhaustive-switch defaults.
-
-**Illegitimate uses:** masking a `catch` block that could genuinely
-fire (FS errors, HTTP errors, DB errors), masking an `if` branch on
-user-facing input, or masking anything you haven't proven unreachable
-from first principles.
-
-**Every ignore gets a one-line rationale comment** on the same line
-or the line above, explaining specifically why the branch is
-unreachable. If the rationale doesn't fit on one line, the branch
-probably isn't unreachable and you're about to ship theatre.
-
-**Cap: roughly 10 ignores across the whole codebase.** At v1.6.14
-we're at 1 (in `errorMessage`). If this grows past ~10, the gate is
-no longer honest — revisit what the thresholds should actually be
-instead of paving over individual branches.
-
-### fast-check (property-based testing)
-
-v1.6.14 introduces a property-based testing pilot in
-`test/embeddings/chunker.properties.test.ts` using `fast-check`. Three
-invariants are checked over 500 total random markdown documents:
-
-- `chunkIndex` values are contiguous `[0, 1, …, n-1]`.
-- No chunk's `content` leaks a raw Unicode PUA protect-sentinel.
-- Every fenced code block appears intact in exactly one chunk.
-
-Cost: <1 second added to the test run. Example-based tests stay
-primary; property tests are a complementary layer for high-complexity
-modules where edge cases are impossible to enumerate by hand.
-
-**Expansion candidates** (deferred until the chunker pilot proves its
-value): `src/vault/wiki-links.ts` `rewriteWikiLinks` round-trip
-invariant, `src/store/fts5-escape.ts` MATCH-syntax validity across
-arbitrary Unicode inputs. Not a race — add a module at a time when the
-marginal test volume justifies it.
-
-### Grandfather mechanism — why `exclude`, not per-file thresholds
-
-**Discovered during implementation and worth spelling out clearly**: in
-vitest 4, per-path threshold overrides (globs as keys inside
-`thresholds: {}`) **cannot exempt a file from the global floor**. They
-can only *add* additional thresholds on top of the globals. The vitest
-source is explicit (`coverage.DM_a_rWm.js:838`): "Global threshold is
-for all files, even if they are included by glob patterns." This is a
-long-standing behaviour mismatch with Jest; tracked at
-[vitest-dev/vitest#6165](https://github.com/vitest-dev/vitest/issues/6165).
-
-Consequence: the **only** mechanism in vitest 4 to exempt a specific
-file from the global coverage floor is `coverage.exclude`. Per-path
-threshold keys are the right tool for *raising* the bar on a
-well-tested subset, never for *lowering* it.
-
-Files currently grandfathered via `coverage.exclude` in
-`vitest.config.ts` (each with a TODO comment pointing at the follow-up
-PR that adds tests + removes the exclusion):
-
-- **`src/cli/index.ts`** — untested legacy CLI entrypoint, no
-  `test/cli/` directory exists.
-- **`src/server.ts`** — subprocess blind spot. Signal handlers,
-  `stdin-EOF` shutdown, and orderly-native-teardown are exercised
-  ONLY by `test/integration/server-stdin-shutdown.test.ts`, which
-  spawns a real subprocess that V8 coverage doesn't follow into.
-  Coverage is the *wrong instrument* for this file's correctness —
-  the subprocess test IS the gate for that code.
-- **`src/pipeline/watcher.ts`** — genuinely untested; real gap
-  surfaced by baseline measurement.
-- **`src/tools/active-note.ts`** / **`base-query.ts`** /
-  **`dataview-query.ts`** — plugin-dependent tools, require mocked
-  Obsidian plugin HTTP contract which nobody's written.
-- **`src/tools/find-path-between.ts`** — the underlying graph
-  primitive is tested in `test/graph/pathfinding.test.ts` but the
-  tool wrapper itself has no direct test.
-
-Trade-off of `exclude`-based grandfathering: excluded files do NOT
-appear in the HTML coverage report. The "hidden gap" cost is
-mitigated by listing each exclusion explicitly in `vitest.config.ts`
-with rationale + TODO — gaps surface in code review and in the
-config file, not in the report. For a solo project that's the right
-trade; the philosophical "surface gaps in the report" path isn't
-available in vitest 4.
-
-### Two discipline principles
-
-These are the rules that keep coverage-as-a-gate from becoming
-coverage-theatre. Both are worth naming separately because they're
-different failure modes:
-
-- **Forward discipline — new tests must actually assert behaviour.**
-  Don't write `expect(x).toBeDefined()`-style tests to trip the meter
-  for new code. A test that hits a line without asserting anything is
-  net-negative: it adds coverage (false confidence) without adding
-  protection. Tests are supposed to fail when the behaviour they
-  describe breaks. If a test can't fail, it's noise.
-- **Backward discipline — don't retrofit existing tests to raise
-  numbers.** If the coverage baseline surfaces an untested module, the
-  response is a follow-up PR that writes *real new tests* for that
-  gap — not assertion-pumping an existing `chunker.test.ts` until its
-  branch count goes up. The baseline tells you where the gaps are; the
-  gaps get filled by tests that assert real behaviour, in their own
-  commits, not by dilating unrelated tests.
-
-### Manual ratchet
-
-Every few releases, run `npm run test:coverage` and compare the per-file
-minimum against the current `thresholds.lines` / `thresholds.branches`
-in `vitest.config.ts`. If the minimum has shifted up meaningfully (5pp+),
-consider a small PR to raise the thresholds. No urgency — the gate's job
-is to catch regressions, not chase the maximum. If the minimum has
-*dropped*, investigate *why* before even thinking about lowering the
-threshold — the drop is the exact signal the gate was designed to surface.
-
-### Escape hatch
-
-If a legitimate refactor drops per-file coverage below threshold and
-blocks a PR, three paths, in order of preference:
-
-1. **Write the missing test** in the same PR. Usually the right answer
-   — the refactor moved or restructured code, and a small test addition
-   covers the new shape.
-2. **Adjust the global threshold** in the same PR, with a commit
-   message explaining why the drop is intentional (e.g. "deleted dead
-   code path; coverage numerator shrank but denominator shrank less").
-   Rare but legitimate. Prefer over option 3 because it's a smaller
-   commit.
-3. **Add the file to `coverage.exclude`** in `vitest.config.ts` with a
-   rationale comment + TODO. Use only for genuine tooling-blind-spot
-   cases like `src/server.ts`'s subprocess-only code, or for code whose
-   test requires infrastructure that doesn't yet exist (like the
-   plugin-HTTP mocks for `src/tools/base-query.ts`). **Not** as a
-   general "I'll write tests later" exemption — each exclusion is a
-   visible gap the TODO surfaces for future work.
-
-What **doesn't** work: adding a per-path threshold override in
-`thresholds: { '**/foo.ts': { lines: 0 } }`. Per-path overrides in
-vitest 4 can only *raise* the bar — they do NOT remove the global
-floor from matched files. See the "Grandfather mechanism" section
-above for why.
+Skipping `docs/coverage.md` is the fastest way to make this gate useless. The discipline principles aren't optional prose; they're the contract that makes coverage measurement mean anything.
 
 ---
 
@@ -734,52 +572,6 @@ still has to open a PR and pass CI the normal way.
   is the only documented use of dev force-push. Keeping it allowed is the
   escape hatch for one-off history surgery (e.g. reordering unpushed commits
   before they're referenced). In routine operation, nothing force-pushes dev.
-
-### Defense in depth — why these give you what you asked for
-
-- **"Block force-pushing main"**: `non_fast_forward` in the hard ruleset, no
-  bypass. Nobody can rewrite main's history — not even with admin credentials.
-- **"Nothing ships to npm unless it came from dev first"**: the `promote`
-  script is the only path that produces a tag-bearing push to main, and its
-  first assertion is `git rev-parse --abbrev-ref HEAD === 'dev'`. On the
-  non-admin side, main pushes require a PR + green CI via
-  `required_status_checks`. Dev-first on the admin path is enforced by
-  tooling; on the non-admin path it's enforced by GitHub.
-- **"Stop it if tests don't pass"**: two layers. At push time,
-  `required_status_checks` gates non-admin pushes. At publish time,
-  `release.yml`'s "Wait for CI" step gates `npm publish` + MCP Registry +
-  GitHub Release on the CI run for the exact tagged SHA — regardless of
-  which path produced the tag.
-- **"Allow partial cherry-picks from dev"**: `promote -- <sha>` walks dev's
-  first-parent trunk from `dev-shipped` to `<sha>`, so you can leave later
-  commits unshipped on dev. Subsequent promotes pick up where you left off.
-
-### Emergency escape hatch
-
-If a ruleset ever locks you out of a legitimate operation:
-
-```bash
-# Disable one ruleset temporarily (replace NAME):
-gh api --method PUT repos/sweir1/obsidian-brain/rulesets/$(
-  gh api repos/sweir1/obsidian-brain/rulesets \
-    --jq '.[] | select(.name=="obsidian-brain/NAME") | .id'
-) -f enforcement=disabled
-
-# Do the operation, then re-enable by re-running the setup:
-npm run setup:protection
-```
-
-### If CI breaks (temporary)
-
-If CI becomes chronically red for reasons unrelated to the PR being merged
-(e.g. HuggingFace model hosting outage), you can temporarily drop the
-required-CI rule and keep everything else:
-
-```bash
-npm run setup:protection -- --no-ci-check
-```
-
-Then re-apply with `npm run setup:protection` once CI stabilises.
 
 ---
 
