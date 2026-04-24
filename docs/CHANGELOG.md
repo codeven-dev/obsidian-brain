@@ -7,6 +7,12 @@ description: User-facing release notes. For full commit detail, see GitHub Relea
 
 User-facing release notes. For full commit-level detail see [GitHub Releases](https://github.com/sweir1/obsidian-brain/releases).
 
+## v1.6.20 — 2026-04-24 — Auto-roll `previous` dist-tag on every publish
+
+**No user-visible change.** Release-plumbing release. Upgrading from v1.6.19 is drop-in — no schema migration, no config change, no runtime behaviour shift.
+
+- **`ci(release)` — roll `previous` dist-tag on every publish.** The `previous` npm dist-tag was set manually during the v1.6.16 / v1.6.17 out-of-order recovery and then stayed pinned at 1.6.17 across every subsequent release, because nothing moved it. `release.yml` now has two new steps bracketing `npm publish`: (1) captures the current `latest` before publishing (into a step output), (2) after publish rolls `previous` to that captured value. Net effect: `previous` always tracks "the version one before the current `latest`", auto-maintained. Useful as a well-defined rollback target for each release. Skips cleanly on first-ever publish or a same-version republish. Reuses the OIDC session set up for `npm publish` — no extra secret or OTP.
+
 ## v1.6.19 — 2026-04-24 — Release system hardening (B5 follow-up)
 
 **No user-visible change.** Release-plumbing release. Upgrading from v1.6.18 is drop-in — no schema migration, no config change, no runtime behaviour shift.
