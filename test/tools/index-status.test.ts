@@ -12,6 +12,8 @@
  *   - ctx.embedderReady() false → reflects in response
  *   - failed_chunks table absent → empty array, no throw
  *   - embedder_capability table absent → null tokens, no throw
+ *   - ctx.reindexInProgress true/false → reflected in response
+ *   - non-'no such table' SQL error in failed_chunks → propagates
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -19,41 +21,8 @@ import { openDb, type DatabaseHandle } from '../../src/store/db.js';
 import { upsertNode } from '../../src/store/nodes.js';
 import { registerIndexStatusTool } from '../../src/tools/index-status.js';
 import { InstantMockEmbedder } from '../helpers/mock-embedders.js';
+import { makeMockServer, unwrap } from '../helpers/mock-server.js';
 import type { ServerContext } from '../../src/context.js';
-
-// ---------------------------------------------------------------------------
-// Mock server — minimal McpServer.tool() capture
-// ---------------------------------------------------------------------------
-
-interface RecordedTool {
-  name: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  cb: (args: any) => Promise<any>;
-}
-
-function makeMockServer(): { server: any; registered: RecordedTool[] } {
-  const registered: RecordedTool[] = [];
-  const server = {
-    tool(
-      name: string,
-      _description: string,
-      _schema: unknown,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      cb: (args: any) => Promise<any>,
-    ): void {
-      registered.push({ name, cb });
-    },
-  };
-  return { server, registered };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function unwrap(result: any): any {
-  if (result.isError) {
-    throw new Error(`Tool returned isError=true: ${result.content?.[0]?.text ?? '(no text)'}`);
-  }
-  return JSON.parse(result.content[0].text);
-}
 
 // ---------------------------------------------------------------------------
 // Context builder — minimal ctx that satisfies the tool's requirements
@@ -65,6 +34,7 @@ function buildCtx(
     embedderReady: boolean;
     initError: unknown;
     bootstrapReasons: string[];
+    reindexInProgress: boolean;
   }> = {},
 ): ServerContext {
   const embedder = new InstantMockEmbedder();
@@ -80,6 +50,7 @@ function buildCtx(
         ? { needsReindex: false, reasons: overrides.bootstrapReasons }
         : null,
     pendingReindex: Promise.resolve(),
+    reindexInProgress: overrides.reindexInProgress ?? false,
     // Unused by the tool but required by the ServerContext interface
     search: undefined as unknown as ServerContext['search'],
     writer: undefined as unknown as ServerContext['writer'],
@@ -215,6 +186,36 @@ describe('tools/index_status', () => {
     expect(result.chunksSkippedInLastRun).toBe(0);
   });
 
+  it('propagates non-"no such table" SQL errors from failed_chunks query', async () => {
+    // Create failed_chunks table with wrong schema to trigger a real SQL error
+    db.exec(`CREATE TABLE failed_chunks (wrong_col TEXT)`);
+    const { server, registered } = makeMockServer();
+    const ctx = buildCtx(db);
+    registerIndexStatusTool(server, ctx);
+
+    // The prepare/query will succeed but return rows without required columns.
+    // To test a genuine non-"no such table" error, replace db.prepare to throw.
+    const origPrepare = db.prepare.bind(db);
+    let callCount = 0;
+    (db as any).prepare = (sql: string) => {
+      if (sql.includes('failed_chunks')) {
+        callCount++;
+        if (callCount === 1) {
+          throw new Error('SQLITE_ERROR: table failed_chunks has no column named note_id');
+        }
+      }
+      return origPrepare(sql);
+    };
+
+    // The tool's error handler wraps thrown errors as isError:true responses
+    const result = await registered[0].cb({});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/SQLITE_ERROR/);
+
+    // Restore
+    (db as any).prepare = origPrepare;
+  });
+
   it('returns null token counts + no throw when embedder_capability table is absent', async () => {
     // Same: no embedder_capability table in the base schema.
     const { server, registered } = makeMockServer();
@@ -248,16 +249,23 @@ describe('tools/index_status', () => {
     expect(result.lastReindexReasons).toEqual([]);
   });
 
-  it('reflects reindexInProgress: false when pendingReindex is a resolved Promise', async () => {
+  it('reflects reindexInProgress: false when ctx.reindexInProgress is false', async () => {
     const { server, registered } = makeMockServer();
-    const ctx = buildCtx(db);
-    // pendingReindex is always Promise.resolve() from buildCtx — truthy object
-    // so reindexInProgress should be true (a Promise is always truthy)
+    const ctx = buildCtx(db, { reindexInProgress: false });
     registerIndexStatusTool(server, ctx);
 
     const result = unwrap(await registered[0].cb({}));
 
-    // ctx.pendingReindex is a resolved Promise (truthy) → reindexInProgress is true
+    expect(result.reindexInProgress).toBe(false);
+  });
+
+  it('reflects reindexInProgress: true when ctx.reindexInProgress is true', async () => {
+    const { server, registered } = makeMockServer();
+    const ctx = buildCtx(db, { reindexInProgress: true });
+    registerIndexStatusTool(server, ctx);
+
+    const result = unwrap(await registered[0].cb({}));
+
     expect(result.reindexInProgress).toBe(true);
   });
 

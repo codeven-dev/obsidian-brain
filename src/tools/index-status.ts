@@ -37,7 +37,12 @@ export function registerIndexStatusTool(server: McpServer, ctx: ServerContext): 
           'SELECT note_id AS note, reason, failed_at AS at FROM failed_chunks ORDER BY failed_at DESC LIMIT 50'
         ).all() as Array<{ note: string; reason: string; at: number }>;
         failedChunks = rows;
-      } catch { /* table not yet present — ignore */ }
+      } catch (err) {
+        // Narrow to 'no such table' so schema-missing is tolerated but real SQL
+        // failures bubble up. When the failed_chunks table doesn't exist yet
+        // (e.g. schema hasn't migrated), we return an empty array gracefully.
+        if (!/no such table/i.test(String(err))) throw err;
+      }
       try {
         const cap = db.prepare(
           'SELECT advertised_max_tokens AS adv, discovered_max_tokens AS disc FROM embedder_capability WHERE embedder_id = ?'
@@ -46,7 +51,12 @@ export function registerIndexStatusTool(server: McpServer, ctx: ServerContext): 
           advertisedMaxTokens = cap.adv;
           discoveredMaxTokens = cap.disc;
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        // Narrow to 'no such table' so schema-missing is tolerated but real SQL
+        // failures bubble up. When the embedder_capability table doesn't exist
+        // yet (e.g. schema hasn't migrated), we return null token counts gracefully.
+        if (!/no such table/i.test(String(err))) throw err;
+      }
 
       // Read existing bootstrap-reported fields
       const bootstrap = ctx.getBootstrap();
@@ -66,7 +76,7 @@ export function registerIndexStatusTool(server: McpServer, ctx: ServerContext): 
         advertisedMaxTokens,
         discoveredMaxTokens,
         lastReindexReasons,
-        reindexInProgress: ctx.pendingReindex !== undefined,
+        reindexInProgress: ctx.reindexInProgress,
         embedderReady: ctx.embedderReady(),
         initError: ctx.initError instanceof Error
           ? `${ctx.initError.name}: ${ctx.initError.message}`
