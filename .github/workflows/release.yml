@@ -91,6 +91,40 @@ jobs:
           fi
           echo "Tag $GITHUB_REF_NAME commit $GITHUB_SHA is on main ✓"
 
+      - name: Wait for CI to succeed on this SHA
+        # Gate npm publish on CI (ci.yml) passing for the tagged commit.
+        # Both CI and this workflow fire on the same push, so we poll for
+        # up to 10 min for CI's run at this SHA to finish. If CI fails
+        # (or times out), we refuse to publish — tests/docs/spellcheck
+        # that ci.yml runs are the authoritative validation and must
+        # pass before any artefact reaches npm / the MCP Registry.
+        #
+        # Skipped for workflow_dispatch (manual publish): the caller is
+        # explicitly overriding the normal path.
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in $(seq 1 60); do
+            result=$(gh run list \
+              --workflow CI \
+              --commit "$GITHUB_SHA" \
+              --json status,conclusion \
+              --jq 'first(.[] | select(.status == "completed")) | .conclusion' 2>/dev/null || true)
+            if [ "$result" = "success" ]; then
+              echo "CI green on $GITHUB_SHA ✓"
+              exit 0
+            fi
+            if [ -n "$result" ] && [ "$result" != "success" ]; then
+              echo "::error::CI concluded with '$result' on $GITHUB_SHA — refusing to publish."
+              exit 1
+            fi
+            echo "Waiting for CI on $GITHUB_SHA ($i/60)…"
+            sleep 10
+          done
+          echo "::error::CI did not complete within 10 minutes on $GITHUB_SHA — refusing to publish."
+          exit 1
+
       - name: Resolve version
         id: ver
         run: |
