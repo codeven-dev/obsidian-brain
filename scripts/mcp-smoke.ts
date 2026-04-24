@@ -35,6 +35,7 @@ const EXPECTED_TOOLS = [
   'move_note',
   'delete_note',
   'reindex',
+  'index_status',
 ] as const;
 
 const FAST_TIMEOUT_MS = 5_000;
@@ -336,6 +337,10 @@ async function main(): Promise<number> {
         { name: 'Smoke Moved', confirm: true },
         SLOW_TIMEOUT_MS,
       ),
+    );
+
+    await runCall('index_status', results, () =>
+      callTool(client, 'index_status', {}, FAST_TIMEOUT_MS),
     );
 
     await runCall('reindex (final)', results, () =>
