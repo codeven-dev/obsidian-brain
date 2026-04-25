@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
-import { join, basename } from 'path';
+import { basename, relative, resolve, sep } from 'path';
 import matter from 'gray-matter';
 import type { DatabaseHandle } from '../store/db.js';
 import { upsertNode } from '../store/nodes.js';
@@ -19,14 +19,11 @@ export class VaultWriter {
   ) {}
 
   createNode(opts: CreateNodeOptions): string {
-    const dir = opts.directory
-      ? join(this.vaultPath, opts.directory)
-      : this.vaultPath;
-    mkdirSync(dir, { recursive: true });
-
     const filename = `${opts.title}.md`;
     const relPath = opts.directory ? `${opts.directory}/${filename}` : filename;
-    const absPath = join(dir, filename);
+    const absPath = safeVaultPath(this.vaultPath, relPath);
+    const dir = safeVaultPath(this.vaultPath, opts.directory ?? '.');
+    mkdirSync(dir, { recursive: true });
 
     if (existsSync(absPath)) {
       throw new Error(`File already exists: ${relPath}`);
@@ -52,7 +49,7 @@ export class VaultWriter {
   }
 
   annotateNode(nodeId: string, content: string): void {
-    const absPath = join(this.vaultPath, nodeId);
+    const absPath = safeVaultPath(this.vaultPath, nodeId);
     if (!existsSync(absPath)) {
       throw new Error(`Node not found: ${nodeId}`);
     }
@@ -64,7 +61,7 @@ export class VaultWriter {
   }
 
   addLink(sourceId: string, targetRef: string, context: string): void {
-    const absPath = join(this.vaultPath, sourceId);
+    const absPath = safeVaultPath(this.vaultPath, sourceId);
     if (!existsSync(absPath)) {
       throw new Error(`Source node not found: ${sourceId}`);
     }
@@ -85,7 +82,7 @@ export class VaultWriter {
   }
 
   private indexFile(relPath: string): void {
-    const absPath = join(this.vaultPath, relPath);
+    const absPath = safeVaultPath(this.vaultPath, relPath);
     const raw = readFileSync(absPath, 'utf-8');
 
     let fm: Record<string, unknown>;
@@ -108,4 +105,20 @@ export class VaultWriter {
       frontmatter: fm,
     });
   }
+}
+
+function safeVaultPath(vaultPath: string, relPath: string): string {
+  if (typeof relPath !== 'string' || relPath.includes('\0')) {
+    throw new Error('Unsafe vault path');
+  }
+
+  const base = resolve(vaultPath);
+  const target = resolve(base, relPath);
+  const diff = relative(base, target);
+
+  if (!diff.startsWith('..') && !diff.includes(`..${sep}`) && !diff.startsWith(sep)) {
+    return target;
+  }
+
+  throw new Error(`Path escapes vault: ${relPath}`);
 }

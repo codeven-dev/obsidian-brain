@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import { basename, join } from 'path';
+import { basename, relative, resolve, sep } from 'path';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerTool } from './register.js';
@@ -43,7 +43,7 @@ async function previewInboundRewrites(
 
   const results: Array<{ file: string; occurrences: number }> = [];
   for (const sourceRel of sources) {
-    const abs = join(vaultPath, sourceRel);
+    const abs = safeVaultPath(vaultPath, sourceRel);
     let content: string;
     try {
       content = await fs.readFile(abs, 'utf-8');
@@ -189,7 +189,7 @@ export async function rewriteInboundLinks(
   let occurrences = 0;
   const rewrittenSources: string[] = [];
   for (const sourceRel of sources) {
-    const abs = join(vaultPath, sourceRel);
+    const abs = safeVaultPath(vaultPath, sourceRel);
     let content: string;
     try {
       content = await fs.readFile(abs, 'utf-8');
@@ -205,6 +205,22 @@ export async function rewriteInboundLinks(
     }
   }
   return { files, occurrences, rewrittenSources };
+}
+
+function safeVaultPath(vaultPath: string, relPath: string): string {
+  if (typeof relPath !== 'string' || relPath.includes('\0')) {
+    throw new Error('Unsafe vault path');
+  }
+
+  const base = resolve(vaultPath);
+  const target = resolve(base, relPath);
+  const diff = relative(base, target);
+
+  if (!diff.startsWith('..') && !diff.includes(`..${sep}`) && !diff.startsWith(sep)) {
+    return target;
+  }
+
+  throw new Error(`Path escapes vault: ${relPath}`);
 }
 
 function resolveToSinglePath(name: string, ctx: ServerContext): string {

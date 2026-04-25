@@ -12,7 +12,7 @@
  */
 
 import { promises as fs } from 'fs';
-import { dirname, join, basename, resolve } from 'path';
+import { dirname, join, basename, relative, resolve, sep } from 'path';
 import matter from 'gray-matter';
 import type { DatabaseHandle } from '../store/db.js';
 import { deleteEdgesBySource, countEdgesBySource, getEdgesBySource } from '../store/edges.js';
@@ -55,8 +55,7 @@ export async function moveNote(
   sourceRel: string,
   destinationRel: string,
 ): Promise<MoveResult> {
-  const absSource = join(vaultPath, sourceRel);
-  const resolvedSource = resolve(absSource);
+  const resolvedSource = safeVaultPath(vaultPath, sourceRel);
 
   // Refuse to proceed if the source is missing — plain rename would surface
   // a cryptic ENOENT.
@@ -65,8 +64,7 @@ export async function moveNote(
   });
 
   const destRelNorm = normalizeDestination(destinationRel, sourceRel);
-  const absDest = join(vaultPath, destRelNorm);
-  const resolvedDest = resolve(absDest);
+  const resolvedDest = safeVaultPath(vaultPath, destRelNorm);
 
   if (resolvedDest === resolvedSource) {
     return { oldPath: sourceRel, newPath: destRelNorm };
@@ -168,7 +166,7 @@ export async function deleteNote(
   fileRelPath: string,
   db: DatabaseHandle,
 ): Promise<DeleteResult> {
-  const abs = join(vaultPath, fileRelPath);
+  const abs = safeVaultPath(vaultPath, fileRelPath);
 
   // Capture edge count before we nuke the row.
   let edgeCount = 0;
@@ -246,4 +244,20 @@ export async function deleteNote(
       stubsPruned,
     },
   };
+}
+
+function safeVaultPath(vaultPath: string, relPath: string): string {
+  if (typeof relPath !== 'string' || relPath.includes('\0')) {
+    throw new Error('Unsafe vault path');
+  }
+
+  const base = resolve(vaultPath);
+  const target = resolve(base, relPath);
+  const diff = relative(base, target);
+
+  if (!diff.startsWith('..') && !diff.includes(`..${sep}`) && !diff.startsWith(sep)) {
+    return target;
+  }
+
+  throw new Error(`Path escapes vault: ${relPath}`);
 }
